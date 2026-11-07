@@ -511,6 +511,28 @@ void invalidInputs() {
 	stream.process({ valid.data(), valid.size(), std::numeric_limits< std::uint64_t >::max(), false }, result);
 	check(result.error == Stream::Error::SequenceOverflow, "Source overflow not caught");
 }
+void externalAbort() {
+	Source source;
+	const Payload half = source.packet(480), full = source.packet(960);
+	for (int prior : { 0, 1, 2 }) {
+		Stream stream(profile("cb-am"));
+		Stream::Result result;
+		check(stream.begin(0), "Abort begin");
+		if (prior) {
+			feed(stream, prior == 1 ? half : full, 0, false, result);
+		}
+		const std::uint64_t cursor = stream.nextOutputFrame();
+		stream.abort(result);
+		check(result.error == Stream::Error::Aborted && result.count == (prior == 2 ? 1u : 0u), "Abort reserve count");
+		check(stream.state() == (prior == 2 ? Stream::State::Faulted : Stream::State::Bypass), "Abort latch");
+		if (result.count) {
+			check(result.packets[0].end == Stream::End::Fault, "Abort is not source EOF");
+		}
+		check(stream.nextOutputFrame() == cursor, "Abort encoded new output");
+		stream.abort(result);
+		check(result.count == 0, "Abort repeated reserve");
+	}
+}
 #ifdef VOICE_TEST_CODEC_FAULTS
 void codecFaults() {
 	Source source;
@@ -572,6 +594,7 @@ int main() {
 		longStream();
 		boundaries();
 		invalidInputs();
+		externalAbort();
 #ifdef VOICE_TEST_CODEC_FAULTS
 		codecFaults();
 #endif

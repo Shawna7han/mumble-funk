@@ -229,3 +229,14 @@ Klanggleichheit zur Offline-Kette mit deren RMS-Abgleich. Lange Lücken, reale
 Clientpaketierung, Latenz, Empfängerwechsel und Effekt-Reihenfolge bleiben spätere
 Integrations-/Hörtestthemen. Weiterarbeit ausschließlich nach neuem Auftrag:
 [B3-Übergabe](analog-voice-b3-handoff.md).
+
+## Additive B3-Ergänzung: externer Fehlerabschluss
+
+B3 ergänzt `abort(Result&)` und `Error::Aborted`: Bei `Active` wird nur eine
+bereits kodierte, noch ungesendete Reserve einmal mit `End::Fault` zurückgegeben.
+Kein Decoder/DSP/Encoder, kein Padding, kein Fortschalten der Medienuhr und kein
+bestätigtes Quellende. Ohne vorheriges Encode entsteht `Bypass`, sonst `Faulted`;
+weitere Abort-Aufrufe sind ohne Ausgabe. `reset()` bleibt der vollständige
+Verwurf ohne Abschluss, insbesondere für echte Identitäts-/Rechteinvalidierung.
+Der zusätzliche Test `externalAbort()` prüft leeren Start, Halbframe, vorhandene
+Reserve, Uhr und Wiederholung; der bisherige B2-Testbestand bleibt erhalten.

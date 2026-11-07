@@ -169,6 +169,15 @@ void AnalogVoiceStream::fail(Error error, int codecError, const Packet &reserve,
 	m_pcmCount = m_pcmSpanCount = 0;
 }
 
+void AnalogVoiceStream::abort(Result &result) noexcept {
+	result = Result{};
+	if (m_state != State::Active) {
+		result.disposition = Disposition::Ignored;
+		return;
+	}
+	fail(Error::Aborted, OPUS_OK, m_reserve, m_hasReserve, result);
+}
+
 bool AnalogVoiceStream::close(End end, Result &result) noexcept {
 	if (m_hasSource) {
 		std::array< float, FrameSamples > zeros{};

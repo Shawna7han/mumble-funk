@@ -29,7 +29,8 @@ public:
 		Decoder,
 		Processor,
 		Encoder,
-		Capacity
+		Capacity,
+		Aborted
 	};
 	enum class Disposition { Accepted, Ignored, Rejected };
 	enum class End { None, InputMarker, Technical, Fault };
@@ -78,6 +79,9 @@ public:
 	void process(const Input &input, Result &result) noexcept;
 	// Controller may request a technical close; it is not a physical PTT release.
 	void finish(Result &result) noexcept;
+	// External overload/expiry: return only an existing reserve as Fault, once.
+	// No decode, DSP, encode, padding or confirmed source end.
+	void abort(Result &result) noexcept;
 	State state() const noexcept { return m_state; }
 	std::uint64_t nextSourceFrame() const noexcept { return m_sourceCursor; }
 	std::uint64_t nextOutputFrame() const noexcept { return m_outputCursor; }
