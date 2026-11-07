@@ -22,6 +22,12 @@ struct AudioFeedbackTestAccess {
         return held; // Block only test producers/try-locks; do not reset codec epochs.
     }
     static std::size_t streams(const AudioFeedback &feedback) { return feedback.m_noise.size(); }
+    static std::size_t terminals(const AudioFeedback &feedback) { return feedback.m_terminals.size(); }
+    static QByteArray reserve(const AudioFeedback &feedback, std::uint64_t connection) {
+        const auto &state=feedback.m_noise.at(connection);
+        CHECK(state.hasReserve && state.reserve.segment==RadioNoise::Segment::Noise);
+        return state.reserve.opus;
+    }
     static RadioNoise::Segment segment(AudioFeedback &feedback, std::uint64_t connection) {
         auto state=feedback.m_noise.find(connection);
         return state==feedback.m_noise.end()?RadioNoise::Segment::End:state->second.reserve.segment;
@@ -138,7 +144,36 @@ static int shortCloseProbe() {
     }
     return failed ? 1 : 0;
 }
+static void delayedLifecycleEndRegression() {
+    Rig r(false,1);r.start();r.tick(10);
+    const auto before=r.forUser(2);CHECK(!before.empty() && !before.back().last);
+    const auto reserve=AudioFeedbackTestAccess::reserve(r.feedback,2);
+    r.plan.invalidate(1);r.feedback.cancel(1);
+    CHECK(AudioFeedbackTestAccess::streams(r.feedback)==0);
+    CHECK(AudioFeedbackTestAccess::terminals(r.feedback)==1);
+    const auto cancelledAt=r.now;
+    std::vector<Heard> delivered;
+    const auto deliver=[&](const AudioFeedback::Recipient &recipient,const QByteArray &bytes,std::uint64_t frame,bool last) {
+        delivered.push_back({recipient,bytes,frame,last,r.now,RadioNoise::Segment::End});return true;
+    };
+    // Advance only the model clock: no callback during the old 80-ms drain,
+    // then deliver inside the old 160-ms "must be empty" observation window.
+    r.now+=160000;
+    CHECK(delivered.empty());
+    r.feedback.tick(r.now,deliver);
+    CHECK(delivered.size()==1);
+    const auto &end=delivered.front();
+    CHECK(end.recipient.connection==2 && end.recipient.session==12 && end.recipient.channel==0);
+    CHECK(end.last && end.frame==before.back().frame+2 && end.bytes==reserve);
+    CHECK(end.time==cancelledAt+160000);
+    CHECK(AudioFeedbackTestAccess::terminals(r.feedback)==0);
+    for(const auto delay:{20000,160000,1000000}) {
+        r.now+=delay;r.feedback.tick(r.now,deliver);CHECK(delivered.size()==1);
+    }
+    std::cout<<"Delayed lifecycle end: exact reserved terminal at +160ms, correct identity/sequence, no later audio: OK\n";
+}
 static void lifecycleRegressions() {
+    delayedLifecycleEndRegression();
     for(bool open:{false,true})for(bool close:{false,true})for(bool timeout:{false,true}) {
         Rig r(true,1,open,close);r.start();r.tick(5);
         if(timeout)r.queue(r.plan.timeout(r.source,0));else r.end();
@@ -269,6 +304,9 @@ static void adaptiveTimingRegressions() {
     }
 }
 int main(int argc, char **argv) {
+    if (argc == 2 && std::string(argv[1]) == "--lifecycle-end-probe") {
+        try {delayedLifecycleEndRegression();return 0;}catch(const std::exception &e){std::cerr<<e.what()<<'\n';return 1;}
+    }
     if (argc == 2 && std::string(argv[1]) == "--timing-probe") {
         try {timerJitterRegression();adaptiveTimingRegressions();return 0;}catch(const std::exception &e){std::cerr<<e.what()<<'\n';return 1;}
     }

@@ -23,6 +23,19 @@ static bool sendVoice(Client &client, const QByteArray &pcm, std::uint64_t frame
 static QList<Received> from(const QList<Received> &all, unsigned session) {
     QList<Received> out; for (const auto &p : all) if (p.session == session) out.append(p); return out;
 }
+static bool appendAudio(const QList<Client::Message> &messages, Version::full_t version, QList<Received> &out) {
+    for (const auto &message : messages) {
+        if (message.first != Type::UDPTunnel) continue;
+        Mumble::Protocol::UDPDecoder<Mumble::Protocol::Role::Client> decoder(version);
+        const auto &bytes = message.second;
+        if (!decoder.decode({reinterpret_cast<const Mumble::Protocol::byte *>(bytes.constData()), std::size_t(bytes.size())})
+            || decoder.getMessageType() != Mumble::Protocol::UDPMessageType::Audio) return false;
+        const auto p = decoder.getAudioData();
+        out.append({p.senderSession, p.frameNumber, p.isLastFrame,
+            QByteArray(reinterpret_cast<const char *>(p.payload.data()), int(p.payload.size()))});
+    }
+    return true;
+}
 // Decode with the receiver's actual stream boundaries. Close is now encoded
 // with prior Open/Noise history, so reset-encoder byte equality is inappropriate.
 static std::vector<float> decoded(const QList<Received> &packets) {
@@ -302,18 +315,93 @@ void TestNoiseIntegration::lifecycle() {
     auto other=channel(admin,"Other"); QVERIFY(other);
     const auto speech=AudioSignal::encode(AudioSignal::syntheticBusy(),100);
     QTest::qWait(30);
-    QVERIFY(sendVoice(a,speech[0],0,false,false)); QVERIFY(a.barrier()); QVERIFY(!from(b.audio(180),b.session).isEmpty());
-    if(change==0) { QVERIFY(b.move(other)); QVERIFY(b.move(0)); }
-    if(change==1) { QVERIFY(a.move(other)); QVERIFY(a.move(0)); }
-    if(change==2) { a.socket.abort(); QTest::qWait(60); }
-    if(change==3) { MumbleProto::UserState m; m.set_session(a.session); m.set_mute(true); QVERIFY(admin.send(Type::UserState,m)); QVERIFY(admin.barrier()); }
+    QVERIFY(sendVoice(a,speech[0],0,false,false)); QVERIFY(a.barrier());
+    auto prior = from(b.audio(180),b.session); QVERIFY(!prior.isEmpty());
+    QList<Client::Message> beforeInvalidation, afterInvalidation;
+    const auto moveFresh = [&](Client &actor, unsigned destination, QList<Client::Message> &preceding) {
+        const auto matches = [&](const QByteArray &bytes) {
+            MumbleProto::UserState reply;
+            return reply.ParseFromArray(bytes.data(),bytes.size()) && reply.session()==actor.session
+                && reply.has_channel_id() && reply.channel_id()==destination;
+        };
+        // The ping fences earlier server replies; remove only stale matching
+        // acknowledgements, preserving every audio packet for validation below.
+        if (!b.barrier()) return false;
+        b.discard(Type::UserState,matches);
+        MumbleProto::UserState request; request.set_session(actor.session); request.set_channel_id(destination);
+        QByteArray reply;
+        return actor.send(Type::UserState,request) && b.receive(Type::UserState,reply,matches,4000,&preceding);
+    };
+    if(change==0 || change==1) {
+        Client &actor = change==0 ? b : a;
+        QVERIFY(moveFresh(actor,other,beforeInvalidation));
+        QVERIFY(moveFresh(actor,0,afterInvalidation));
+    }
+    if(change==2) {
+        const auto removed = [&](const QByteArray &bytes) {
+            MumbleProto::UserRemove reply;
+            return reply.ParseFromArray(bytes.data(),bytes.size()) && reply.session()==a.session;
+        };
+        QVERIFY(b.barrier()); b.discard(Type::UserRemove,removed);
+        a.socket.abort(); QByteArray reply;
+        QVERIFY(b.receive(Type::UserRemove,reply,removed,4000,&beforeInvalidation));
+    }
+    if(change==3) {
+        const auto muted = [&](const QByteArray &bytes) {
+            MumbleProto::UserState reply;
+            return reply.ParseFromArray(bytes.data(),bytes.size()) && reply.session()==a.session
+                && reply.has_mute() && reply.mute();
+        };
+        QVERIFY(b.barrier()); b.discard(Type::UserState,muted);
+        MumbleProto::UserState m; m.set_session(a.session); m.set_mute(true);
+        QVERIFY(admin.send(Type::UserState,m)); QByteArray reply;
+        QVERIFY(b.receive(Type::UserState,reply,muted,4000,&beforeInvalidation));
+    }
     if(change==4) {
         MumbleProto::ACL acl; acl.set_channel_id(0); acl.set_inherit_acls(false);
         auto entry=acl.add_acls(); entry->set_group("all"); entry->set_apply_here(true);
         entry->set_apply_subs(true); entry->set_deny(8); // Existing Speak permission bit.
         QVERIFY(admin.send(Type::ACL,acl)); QVERIFY(admin.barrier());
+        QVERIFY(b.barrier(&beforeInvalidation));
     }
-    b.audio(80); QVERIFY(from(b.audio(160),b.session).isEmpty());
+    QList<Received> before, after;
+    QVERIFY(appendAudio(beforeInvalidation,b.version,before));
+    QVERIFY(appendAudio(afterInvalidation,b.version,after));
+    prior += from(before,b.session);
+    after += b.audio(0);
+    // Wait for completion, not an assumed 80-ms drain. Use the harness's existing
+    // receive deadline. A receiver that was away at delivery may lose its best-
+    // effort terminal; sender cancellation must close the still-present receiver.
+    bool ended = std::any_of(prior.begin(),prior.end(),[](const Received &p){return p.last;})
+        || std::any_of(after.begin(),after.end(),[](const Received &p){return p.last;});
+    if (!ended) {
+        QByteArray reply; QList<Client::Message> preceding;
+        const bool arrived = b.receive(Type::UDPTunnel,reply,{},4000,&preceding);
+        if (arrived) {
+            preceding.append(qMakePair(Type::UDPTunnel,reply));
+            QVERIFY(appendAudio(preceding,b.version,after));
+        } else {
+            QVERIFY2(change==0,"Missing terminal after sender invalidation");
+            after += b.audio(0); // Also reject unexpected packets retained on timeout.
+        }
+    }
+    for (const auto &packet : after) {
+        QCOMPARE(packet.session,b.session);
+        QVERIFY2(packet.last,"Noise payload after confirmed invalidation");
+    }
+    const auto stream = prior + after;
+    int terminals = 0;
+    for (int i=0;i<stream.size();++i) {
+        const auto &packet = stream[i];
+        QCOMPARE(packet.session,b.session);
+        if (i) QCOMPARE(packet.frame,stream[i-1].frame+2);
+        QCOMPARE(opus_packet_get_nb_samples(reinterpret_cast<const unsigned char *>(packet.payload.constData()),
+            packet.payload.size(),48000),960);
+        if (packet.last) { ++terminals; QCOMPARE(i,stream.size()-1); }
+    }
+    if (change==0) QVERIFY(terminals<=1); else QCOMPARE(terminals,1);
+    QVERIFY(!decoded(stream).empty());
+    QVERIFY2(b.audio(160).isEmpty(),"Audio after completed/invalidated private stream");
 }
 void TestNoiseIntegration::reuse() {
     Fixture f; QVERIFY(f.start("true",5000,500,false,config(false)+"users=2\n"));
