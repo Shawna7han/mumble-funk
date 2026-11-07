@@ -42,6 +42,8 @@ public:
 	struct Transmission {
 		std::unique_lock< std::mutex > lock;
 		bool allowed = false;
+		// Accepted start, independent of diagnostic sinks and source frame resets.
+		bool started = false;
 		// Direct forwarding decision, independent of diagnostic event filtering.
 		bool feedback = false;
 	};

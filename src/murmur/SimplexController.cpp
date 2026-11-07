@@ -143,6 +143,7 @@ SimplexController::Transmission SimplexController::begin(const Packet &packet) {
 		m_owners[user.context.channel] = user.context.connection;
 		user.phase                     = Phase::Owning;
 		user.accepted                  = 0;
+		result.started                 = true;
 		event(user, "granted", QStringLiteral("first_accepted_packet"), now, 0);
 	}
 	user.lastAccepted = now;

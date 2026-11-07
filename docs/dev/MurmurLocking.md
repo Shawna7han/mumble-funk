@@ -280,3 +280,46 @@ crypto lock is released and before `sendmsg` consumes it. The per-user crypto
 lock still protects encryption state; the thread-local buffer separately protects
 the lifetime of the outgoing bytes. The concurrent-ingress regression checks
 1,024 authenticated packets and their unchanged payloads at one UDP receiver.
+
+### Isolated AnalogVoiceService (B3; not active in Server)
+
+`tools/analog-voice` optionally builds one worker with four preconstructed codec
+slots. **Server does not own or call this service in B3.** The existing
+`Transmission` guard and direct forwarding above remain unchanged.
+
+The tested future handoff order is voice lock -> Simplex `Transmission` mutex ->
+short service mutex. `Transmission::started` identifies an actually accepted new transmission independently
+of diagnostic callbacks and source frame resets. While the guard still owns its lock, copy recipient identities
+and payload into `open`/`submit` (or reserve `finish` for a technical boundary).
+Only successful ordered admission may replace direct forwarding in B4. A rejected
+admission is a delivery failure; it must never send originals around an existing
+channel barrier. No service method obtains a voice or Simplex lock. Worker codec,
+DSP, reset, abort and wake callback calls execute outside the service mutex. The
+worker never calls `SimplexController::begin` or decides eligibility.
+
+The dispatcher acknowledges one coalesced wake, takes bounded batches under the
+service mutex, releases that mutex, then resolves recipients and sends. B4 must
+hold the appropriate voice/lifetime protection across `take` and local network
+submission, and must recheck the current permission set without expanding the
+returned recipients. Never hold the service mutex over server/network calls or
+call the dispatcher synchronously from `Wake`. At most one notification may be
+pending in addition to the currently running callback. Callbacks must not throw;
+the injected clock must be monotonic, short, nonthrowing and must not reenter.
+
+Control-plane changes update connection routing epochs under voice protection;
+service invalidation never waits for a codec. Recipient Deaf/SelfDeaf changes use
+`setReceive`, not an additional Simplex send restriction. It irrevocably prunes
+that identity from every pending recipient snapshot without cancelling its own
+sending generation. `update` is for channel/send-routing changes and invalidates
+that connection's own queued generations; neither method changes Simplex ownership.
+Release callbacks invoked under Simplex may only reserve a service control state;
+they must not acquire voice locks. A confirmed marker closes via its admitted
+payload ticket, not a premature callback invalidation. Genuine invalidation
+cancels pending results; a normal Simplex release does not.
+
+Shutdown owner: stop admission and UDP/control producers, invalidate queued Qt
+callbacks via their QObject/lifetime context, call `shutdown`/join outside voice,
+Simplex and service locks, then destroy service/server data. Shutdown is idempotent
+but concurrent shutdown callers/destruction are not supported. Keep the Wake
+context alive until join returns. See [B3](../funk/analog-voice-b3.md) and the
+[B4 handoff](../funk/analog-voice-b4-handoff.md) for remaining integration work.
