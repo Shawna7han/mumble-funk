@@ -1,10 +1,4 @@
 # Optional Phase-1 file adapter. Never a dependency of funk-voice-dsp.
-find_path(OPUS_INCLUDE_DIR opus.h PATH_SUFFIXES opus)
-find_library(OPUS_LIBRARY NAMES opus)
-if(NOT OPUS_INCLUDE_DIR OR NOT OPUS_LIBRARY)
-	message(FATAL_ERROR "VOICE_BUILD_PREVIEW requires libopus headers and library")
-endif()
-
 add_library(funk-voice-preview-support STATIC
 	../src/OpusCodec.cpp ../src/WaveIO.cpp ../src/Preview.cpp)
 target_include_directories(funk-voice-preview-support PUBLIC "${OPUS_INCLUDE_DIR}")
