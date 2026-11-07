@@ -31,7 +31,7 @@ Generation gesunde Instanzen reservieren. Kein eigener Opus-Bibliotheksimport.
 ## API und Verantwortung des Aufrufers
 
 `AnalogVoiceStream(parameters)` initialisiert DSP und Codecs. Nur die Konstruktion
-allokiert Codec-Speicher. `begin(firstSourceFrame)` setzt DSP und beide Codecs für
+allokiert Codec-Speicher. `begin(firstSourceFrame, outputFrameFloor = 0)` setzt DSP und beide Codecs für
 eine neue Sendung zurück; während `Active` lehnt es einen Neustart ab.
 `reset()` verwirft eine Generation ohne Ausgabe und stellt `Idle` her; der nächste
 `begin()` initialisiert den Codec-Zustand erneut. Ausgangsframezahlen bleiben
@@ -69,7 +69,10 @@ Keine Uhr und keine selbst erfundene PTT-/Timeout-Entscheidung im Adapter.
 
 Quell- und Ausgangscursor sind getrennt. Eingangsfortschritt ist Paketdauer / 10 ms,
 Ausgangsfortschritt je 20-ms-Paket genau 2. Ein neuer Start wählt mindestens den
-bisher nächsten Ausgangsframe und mindestens den Quellenstart. Keine 60-Sekunden-
+bisher nächsten Ausgangsframe und mindestens den Quellenstart sowie den optional
+extern mitgeführten `outputFrameFloor`. Damit kann B3 den Ausgangscursor einer
+Verbindung beim Wechsel einer Codecinstanz erhalten, ohne die Quellnummer zu
+verfälschen. Keine 60-Sekunden-
 Modulo-Uhr oder Rücksetzung auf 0 zwischen kurzen Sendungen. Additionen werden auf
 Überlauf geprüft; ein ungültiger Start verschiebt den Ausgangscursor nicht.
 

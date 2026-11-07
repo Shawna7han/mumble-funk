@@ -426,6 +426,11 @@ void boundaries() {
 	packets.clear();
 	collect(packets, result);
 	equalPayloads(packets, reference({ small }, profile("cb-am")));
+	Stream reassigned(profile("cb-am"));
+	check(reassigned.begin(5, 700), "External connection clock floor rejected");
+	feed(reassigned, small, 5, true, result);
+	check(result.packets[0].frame == 700 && reassigned.nextSourceFrame() == 6,
+		  "External output floor changed source clock");
 }
 void invalidInputs() {
 	Source source;

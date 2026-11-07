@@ -72,7 +72,8 @@ public:
 
 	explicit AnalogVoiceStream(const Parameters &parameters);
 	// Only between transmissions. Preserve the output clock across starts/aborts.
-	bool begin(std::uint64_t sourceFrame) noexcept;
+	// A later codec pool can also supply the connection's persisted output floor.
+	bool begin(std::uint64_t sourceFrame, std::uint64_t outputFrameFloor = 0) noexcept;
 	void reset() noexcept;
 	void process(const Input &input, Result &result) noexcept;
 	// Controller may request a technical close; it is not a physical PTT release.

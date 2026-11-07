@@ -42,7 +42,7 @@ void AnalogVoiceStream::reset() noexcept {
 	m_processor.reset();
 }
 
-bool AnalogVoiceStream::begin(std::uint64_t sourceFrame) noexcept {
+bool AnalogVoiceStream::begin(std::uint64_t sourceFrame, std::uint64_t outputFrameFloor) noexcept {
 	if (m_state == State::Active) {
 		return false;
 	}
@@ -52,7 +52,7 @@ bool AnalogVoiceStream::begin(std::uint64_t sourceFrame) noexcept {
 		m_state = State::Bypass;
 		return false;
 	}
-	const std::uint64_t outputFrame = std::max(m_outputCursor, sourceFrame);
+	const std::uint64_t outputFrame = std::max({ m_outputCursor, sourceFrame, outputFrameFloor });
 	if (outputFrame > MaxFrame - 2) {
 		m_state = State::Bypass;
 		return false;
