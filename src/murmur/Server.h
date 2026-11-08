@@ -13,6 +13,7 @@
 #endif
 
 #include "ACL.h"
+#include "AnalogVoiceLifecycle.h"
 #include "AudioFeedback.h"
 #include "AudioReceiverBuffer.h"
 #include "Ban.h"
@@ -132,9 +133,11 @@ protected:
 	void submitAnalogVoice(ServerUser &user, const Mumble::Protocol::AudioData &audio, AudioReceiverBuffer &receivers,
 						   bool started);
 	void deliverAnalogVoice();
+	AnalogVoiceLifecycle m_analogLifecycle;
+	void requestAnalogCues(const std::vector<SquelchPlan::Cue> &cues, bool timeout = false);
 	void sendVoicePacket(Mumble::Protocol::AudioData audio, AudioReceiverBuffer &receivers,
 						 Mumble::Protocol::UDPAudioEncoder< Mumble::Protocol::Role::Server > &encoder,
-						 bool immediate = false);
+						 bool immediate = false, funkvoice::AnalogVoiceService::Recipients *delivered = nullptr);
 	std::uint64_t m_nextDiagnosticConnection = 0;
 	void recordVoicePacket(const ServerUser &user, const Mumble::Protocol::AudioData &audio,
 						   VoiceDiagnosticRecord::Transport transport);
@@ -359,7 +362,7 @@ public:
 	void addListener(QHash< ServerUser *, VolumeAdjustment > &listeners, ServerUser &user, const Channel &channel);
 	void processMsg(ServerUser *u, Mumble::Protocol::AudioData audioData, AudioReceiverBuffer &buffer,
 					Mumble::Protocol::UDPAudioEncoder< Mumble::Protocol::Role::Server > &encoder);
-	void sendMessage(ServerUser &u, const unsigned char *data, int len, QByteArray &cache, bool force = false,
+	bool sendMessage(ServerUser &u, const unsigned char *data, int len, QByteArray &cache, bool force = false,
 					 bool immediate = false);
 	void run();
 

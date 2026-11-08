@@ -130,7 +130,7 @@ Server::Server(int snum, QObject *p) : QThread(p) {
 														  releaseAnalogVoice(event);
 													  if (m_simplexLogger)
 														  m_simplexLogger->submit(event);
-													  if (m_squelchPlan && event.event == "released" && event.reason != "marker_confirmed") {
+													  if (!m_analogVoice && m_squelchPlan && event.event == "released" && event.reason != "marker_confirmed") {
 														  if (event.reason == "timeout_suspected" && (m_noiseEnabled || m_squelchTimeoutCloseEnabled)
 															  && (m_noiseEnabled || m_squelchCloseEnabled) && m_audioFeedback) {
 															  // The controller lock serializes this release against the next
@@ -158,8 +158,8 @@ Server::Server(int snum, QObject *p) : QThread(p) {
 	initializeAnalogVoice();
 	m_busyEnabled = getConf("busytone", Meta::mp.busyTone).toBool()
 		&& getConf("busytonevolume", Meta::mp.busyToneVolume).toInt() > 0;
-	const bool noiseRequested   = !m_analogVoice && getConf("radionoise", Meta::mp.radioNoise).toBool();
-	const bool squelchRequested = !m_analogVoice && getConf("squelch", Meta::mp.squelch).toBool();
+	const bool noiseRequested   = getConf("radionoise", Meta::mp.radioNoise).toBool();
+	const bool squelchRequested = getConf("squelch", Meta::mp.squelch).toBool();
 	if (m_simplex && getConf("audiofeedback", Meta::mp.audioFeedback).toBool()
 		&& (m_busyEnabled || squelchRequested || noiseRequested)) {
 		try {
@@ -1200,7 +1200,7 @@ bool Server::checkDecrypt(ServerUser *u, const unsigned char *encrypt, unsigned 
 	return false;
 }
 
-void Server::sendMessage(ServerUser &u, const unsigned char *data, int len, QByteArray &cache, bool force,
+bool Server::sendMessage(ServerUser &u, const unsigned char *data, int len, QByteArray &cache, bool force,
 						 bool immediate) {
 	ZoneScoped;
 
@@ -1226,12 +1226,12 @@ void Server::sendMessage(ServerUser &u, const unsigned char *data, int len, QByt
 			QMutexLocker wl(&u.qmCrypt);
 
 			if (!u.csCrypt->isValid()) {
-				return;
+				return false;
 			}
 
 			if (!u.csCrypt->encrypt(reinterpret_cast< const unsigned char * >(data),
 									reinterpret_cast< unsigned char * >(buffer), static_cast< unsigned int >(len))) {
-				return;
+				return false;
 			}
 		}
 #ifdef Q_OS_WIN
@@ -1277,27 +1277,28 @@ void Server::sendMessage(ServerUser &u, const unsigned char *data, int len, QByt
 			struct in_pktinfo *pktinfo = reinterpret_cast< struct in_pktinfo * >(CMSG_DATA(cmsg));
 			memset(pktinfo, 0, sizeof(*pktinfo));
 			if (tcpha.isV6())
-				return;
+				return false;
 			pktinfo->ipi_spec_dst.s_addr = tcpha.toIPv4();
 		}
 
 
-		::sendmsg(u.sUdpSocket, &msg, 0);
+		const bool submitted = ::sendmsg(u.sUdpSocket, &msg, 0) == len + 4;
 #else
 #	ifdef Q_OS_WIN
 		using size_type = int;
 #	else
 		using size_type = std::size_t;
 #	endif
-		::sendto(u.sUdpSocket, buffer, static_cast< size_type >(len + 4), 0,
+		const bool submitted = ::sendto(u.sUdpSocket, buffer, static_cast< size_type >(len + 4), 0,
 				 reinterpret_cast< struct sockaddr * >(&u.saiUdpAddress),
-				 (u.saiUdpAddress.ss_family == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in));
+				 (u.saiUdpAddress.ss_family == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in)) == len + 4;
 #endif
 #ifdef Q_OS_WIN
 		if (Meta::hQoS && dwFlow)
 			QOSRemoveSocketFromFlow(Meta::hQoS, 0, dwFlow, 0);
 #else
 #endif
+		return submitted;
 	} else {
 		if (cache.isEmpty())
 			cache = QByteArray(reinterpret_cast< const char * >(data), len);
@@ -1305,12 +1306,13 @@ void Server::sendMessage(ServerUser &u, const unsigned char *data, int len, QByt
 			// Dispatcher already holds voice write protection and has revalidated
 			// the complete connection identity. Do not enqueue a session-only event.
 			Q_ASSERT(QThread::currentThread() == thread());
-			if (u.feedbackWritable())
-				tcpTransmitData(cache, u.uiSession);
+			if (!u.feedbackWritable()) return false;
+			tcpTransmitData(cache, u.uiSession);
 		} else {
 			emit tcpTransmit(cache, u.uiSession);
 		}
 	}
+	return true;
 }
 
 void Server::addListener(QHash< ServerUser *, VolumeAdjustment > &listeners, ServerUser &user, const Channel &channel) {
@@ -1356,8 +1358,11 @@ void Server::recordVoicePacket(const ServerUser &user, const Mumble::Protocol::A
 void Server::updateSimplexPermission(ServerUser &user) {
 	// Caller holds qrwlVoiceThread for write; no packet can pass the changed permission.
 	syncAnalogVoice(user);
-	if (m_squelchPlan && (user.bMute || user.bSuppress || user.bSelfMute || user.bDeaf || user.bSelfDeaf))
-		m_squelchPlan->invalidate(user.diagnosticConnection);
+	if (m_squelchPlan && (user.bMute || user.bSuppress || user.bSelfMute || user.bDeaf || user.bSelfDeaf)) {
+        if (m_analogVoice && !(user.bMute || user.bSuppress || user.bSelfMute))
+            m_squelchPlan->invalidateRecipient(user.diagnosticConnection);
+        else m_squelchPlan->invalidate(user.diagnosticConnection);
+    }
 	if (m_simplex && (user.bMute || user.bSuppress || user.bSelfMute)) {
 		m_simplex->invalidate(user.diagnosticConnection, QStringLiteral("permission_lost"));
 	}
@@ -1588,7 +1593,7 @@ void Server::processMsg(ServerUser *u, Mumble::Protocol::AudioData audioData, Au
 
 void Server::sendVoicePacket(Mumble::Protocol::AudioData audioData, AudioReceiverBuffer &buffer,
 							 Mumble::Protocol::UDPAudioEncoder< Mumble::Protocol::Role::Server > &encoder,
-							 bool immediate) {
+							 bool immediate, funkvoice::AnalogVoiceService::Recipients *delivered) {
 	ZoneNamedN(__tracy_scoped_zone2, TracyConstants::AUDIO_SENDOUT_ZONE, true);
 
 	buffer.preprocessBuffer();
@@ -1641,8 +1646,10 @@ void Server::sendVoicePacket(Mumble::Protocol::AudioData audioData, AudioReceive
 
 			// Send encoded packet to all receivers of this range
 			for (auto it = currentRange.begin; it != currentRange.end; ++it) {
-				sendMessage(it->getReceiver(), encodedPacket.data(), static_cast< int >(encodedPacket.size()), tcpCache,
-							false, immediate);
+				if (sendMessage(it->getReceiver(), encodedPacket.data(), static_cast< int >(encodedPacket.size()), tcpCache,
+							false, immediate) && delivered && it->getReceiver().bOpus
+                    && delivered->count < funkvoice::AnalogVoiceService::MaxRecipients)
+                    delivered->identities[delivered->count++] = it->getReceiver().analogIdentity;
 			}
 
 			// Find next range

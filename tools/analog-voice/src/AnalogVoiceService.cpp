@@ -641,7 +641,7 @@ AnalogVoiceService::Receipt AnalogVoiceService::submit(Handle handle, const Inpu
 	impl.changed.notify_one();
 	return { Admission::Accepted, job.ticket };
 }
-AnalogVoiceService::Receipt AnalogVoiceService::finish(Handle handle) {
+AnalogVoiceService::Receipt AnalogVoiceService::finish(Handle handle, std::uint64_t lastSourceFrame, Time endedAt) {
 	Impl &impl = *m_impl;
 	std::lock_guard< std::mutex > lock(impl.mutex);
 	if (impl.stopping) {
@@ -654,7 +654,8 @@ AnalogVoiceService::Receipt AnalogVoiceService::finish(Handle handle) {
 	if (entry->closing) {
 		return { Admission::Closed, entry->end.ticket };
 	}
-	entry->end.ticket = impl.ticket(*entry, 0, 0, true, true);
+	entry->end.ticket = impl.ticket(*entry, lastSourceFrame, 0, true, true);
+	if (endedAt != Time{}) entry->end.ticket.accepted = endedAt;
 	entry->closing    = true;
 	if (!entry->end.ticket.channelTicket) {
 		impl.fault(*entry, Failure::Sequence);
@@ -703,6 +704,7 @@ bool AnalogVoiceService::take(Batch &batch) {
 			continue;
 		}
 		batch            = entry.output;
+		batch.handle = entry.handle;
 		batch.recipients = {};
 		for (std::size_t i = 0; i < entry.recipients.count; ++i) {
 			Impl::Connection *recipient = impl.connection(entry.recipients.identities[i]);

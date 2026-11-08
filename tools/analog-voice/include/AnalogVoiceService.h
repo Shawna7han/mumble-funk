@@ -74,6 +74,7 @@ public:
 		Ticket ticket;
 	};
 	struct Batch {
+		Handle handle; // Stable lane/generation for bounded dispatcher lifecycle state.
 		Ticket completed;
 		AnalogVoiceStream::Result audio;
 		Recipients recipients;
@@ -124,7 +125,7 @@ public:
 	// the existing Simplex Transmission guard. An old open channel must first close.
 	Handle open(Identity sender, bool bypass = false);
 	Receipt submit(Handle, const Input &);
-	Receipt finish(Handle); // Reserved technical end; works with a full data queue.
+	Receipt finish(Handle, std::uint64_t lastSourceFrame = 0, Time endedAt = {}); // Reserved technical end; works with a full data queue.
 	void cancel(Handle);    // Reserved cancellation; never queues a fallible event.
 
 	// Main-thread dispatcher: acknowledge once at entry, then take until false.

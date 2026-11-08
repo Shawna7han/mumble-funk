@@ -40,7 +40,7 @@ void Server::initializeAnalogVoice() {
 		});
 		++analogServers;
 		log(QStringLiteral("Experimental analog voice enabled: %1; one worker, four codecs, fixed storage=%2 bytes; "
-						   "Squelch/Noise disabled until B5; restart required")
+						   "ordered Squelch/Noise lifecycle; restart required")
 				.arg(name)
 				.arg(static_cast< qulonglong >(Service::fixedStorageBytes())));
 	} catch (const std::exception &error) {
@@ -90,9 +90,11 @@ void Server::releaseAnalogVoice(const SimplexController::Event &event) {
 		if (entry.connection != event.context.connection)
 			continue;
 		if (event.reason == QLatin1String("timeout_suspected"))
-			m_analogVoice->finish(entry.handle);
-		else
+			m_analogVoice->finish(entry.handle, event.frame, Service::Time(std::chrono::microseconds(event.timeUs)));
+		else {
 			m_analogVoice->cancel(entry.handle);
+            if (m_squelchPlan) m_squelchPlan->invalidate(event.context.connection);
+        }
 		entry = {};
 	}
 }
@@ -205,8 +207,28 @@ void Server::deliverAnalogVoice() {
 											   != metadata->positionalConnections.end();
 				receivers.addReceiver(*sender, *receiver, Mumble::Protocol::AudioContext::NORMAL, positional);
 			}
-			sendVoicePacket(audio, receivers, encoder, true);
+			Service::Recipients delivered;
+            sendVoicePacket(audio, receivers, encoder, true, &delivered);
+            if (m_squelchPlan)
+                requestAnalogCues(m_analogLifecycle.delivered(*m_squelchPlan, batch, i, delivered));
 		}
+        if (m_squelchPlan)
+            requestAnalogCues(m_analogLifecycle.complete(*m_squelchPlan, batch), batch.completed.technical);
 	}
 	qrwlVoiceThread.unlock();
+}
+
+void Server::requestAnalogCues(const std::vector<SquelchPlan::Cue> &cues, bool timeout) {
+    for (const auto &cue : cues) {
+        if (cue.kind == SquelchPlan::Kind::Open) {
+            if (m_noiseEnabled) m_audioFeedback->requestNoise(cue);
+            if (!m_squelchOpenEnabled) {
+                m_squelchPlan->consume(cue, cue.sender, cue.recipient, true);
+                continue;
+            }
+        } else if (!m_squelchCloseEnabled || (timeout && !m_squelchTimeoutCloseEnabled)) {
+            continue;
+        }
+        m_audioFeedback->requestSquelch(cue);
+    }
 }
