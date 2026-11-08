@@ -1,5 +1,9 @@
 # Übergabe nach B4: B5 noch nicht begonnen
 
+Historischer B4-Stand: Die nachfolgende B5-Implementierung und ihre tatsächliche
+Abnahme stehen in [B5](analog-voice-b5.md). Frühere Aussagen zur Unterdrückung
+von Squelch/Noise beschreiben den damaligen B4-Stand.
+
 Stand: 8. November 2026. Ausschließlich `feature/analog-voice-live`, bestehender
 [Draft-PR #15](https://github.com/Shawna7han/mumble-funk/pull/15). Nicht mergen,
 nicht produktiv aktivieren, nicht auf dem VPS installieren. B5 erst nach neuem

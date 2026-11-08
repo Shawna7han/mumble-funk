@@ -148,7 +148,46 @@ OCB2-Zugriffe. Externe Qt-/libopus-Bibliotheken sind lokal nicht instrumentiert.
 
 ## Tatsächliche Abnahme
 
-Noch laufende Prüfungen: siehe abschließende Ergänzung vor Veröffentlichung.
+- Vollständiger Non-Unity-Release-Serverbuild erfolgreich.
+- Erneute vollständige native CTest-Suite: **39/39 bestanden**, 445,12 s.
+- Gezielte abschließende Analog-Suite: **3/3 bestanden**; zusätzlich fünf
+  gemeinsame Wiederholungen der neuen Gate- und Sprecherwechseltests erfolgreich.
+- Isolierte B1–B3-Release-Suite: **6/6**, relevante TSan-Tests **2/2** bestanden.
+- ASan-/UBSan-Vollserverbuild erfolgreich. Ausgewählte vier CTest-Targets:
+  **2/4 bestanden** (die beiden neuen B5-Targets); B4-Analog-Integration und
+  CryptographicHash wegen offener Leakbefunde fehlgeschlagen. Der B4-Test meldet
+  die Shutdown-Exitcodeabweichung durch LeakSanitizer. Kein sauberer Sanitizerlauf.
+  Gesondert mit Server-Reportdateien ausgeführte B5-Profil-/Noise-/Gate-Fälle
+  bestanden; der ACL-Leak in Kindprozessen bleibt dabei nachgewiesen.
+- Native Installer-/Audiokonfigurationsprüfungen: **42 Tests bestanden** über
+  install/assets/preview/squelch-admin/boost/radio-noise/defaults.
+- Source-Guards **29/29**, Setup **25/25**, Audio-Security **13/13**, GHCR-Guards
+  **3/3** bestanden. GHCR wurde mit dem vorhandenen System-Python/PyYAML geprüft;
+  der erste Cloud-Python-Aufruf hatte das Modul nicht installiert.
+- DSP-SHA256 unverändert, `git diff --check` bestanden; C++ mit clang-format 10.
+- Vollständiger Dockerfile-Build erfolgreich. Wiederholte Ubuntu-Container-Suite:
+  **39/39 CTest-Targets**, 488,23 s, und **38/38 Python-Tests** bestanden.
+  Fertiges lokales Image: `sha256:1f779c6386fdd0b6ed8fd95f7a56558bc1f230f47ad33beb30362ab3f75fa99b`.
+  Laufzeitabnahme des fertigen Images mit `integration.py --audio-feedback
+  --radio-noise --host-port 64740` vollständig bestanden: TCP/verschlüsseltes
+  UDP, bestätigte und Timeout-Enden einschließlich 62-s-Noise-Übertragung,
+  Busy und unveränderte Sprache, Rootless-Isolation, Neustart/Recreate,
+  Portkonflikte, paralleler nativer Server, Backup/Restore, WAV-/INI-Persistenz
+  und sauberer Shutdown. Die native Probe verwendete exakt die libopus.so.0
+  aus dem Image; die Cloud-Standardversion 1.5.2 unterscheidet sich von Ubuntus 1.4.
+  Auch die zweite Prebuilt-Compose-/Migrations-/Rollback-Prüfung bestand
+  vollständig. Beide Skriptläufe endeten mit Exit 0; ihre Container wurden
+  aufgeräumt. Die lokale Previous-Image-Fixture verwendet ausdrücklich dasselbe
+  Image und beweist Compose-Migration/Rollback, keinen Versionsupgrade.
+
+Während paralleler Build-/Sanitizerlast scheiterten zunächst ein B4-Überlast-
+Empfangstest im Gesamtlauf (38/39) und ein 120-ms-Profilfall in einer gezielten
+Wiederholung. Es wurden keine Limits erhöht oder Prüfungen entfernt. Danach
+bestanden alle drei Analog-Targets gemeinsam erneut. Die gesonderten
+Gate-/Sprecherwechseltests bestanden in fünf weiteren gemeinsamen Läufen.
+Die erste fehlgeschlagene Empfangsprüfung hatte noch keine abschließende
+Serverstatistik; ihre genaue Ursache ist damit nicht nachgewiesen. Die
+Profilsuite gibt bei erneutem Empfangsfehler nun die Serverausgabe aus.
 
 Zusätzlicher bestehender UBSan-Befund während dieser Abnahme: der unaligned
 quint32-Store beim TCP-Tunnelheader (`Server::tcpTransmitData`, aktuell
@@ -157,3 +196,18 @@ Ausgangscommit 5b1473b6 vorhanden. Er bleibt als weiterer Altbefund offen;
 B5 behauptet keinen bereinigten Sanitizer-Gesamtstand. Ein separat protokollierter
 B5-Serverlauf bestätigt zudem weiterhin den 224-Byte-ACL-Leak, auch wenn der
 übergeordnete Sockettest regulär endet.
+
+Lokales Docker-Umgebungsproblem: Die erste vollständige Container-Teststufe
+bestand mit 39/39 CTest-Targets und 38/38 Python-Tests. Erst eine nachfolgende
+Runtime-COPY-Schicht scheiterte mit `no space left on device`. Der lokale Daemon
+verwendet vfs. Nach Entfernen erzeugter ASan-Buildartefakte, Paketarchive sowie des
+alten lokalen B4-Testimages und seiner unbenutzten Build-Caches waren wieder rund
+2 GB frei. Testberichte und ASan-CMakeCache wurden behalten; keine Quelländerung
+oder Git-Historie wurde verworfen. Die anschließende Wiederholung bestand vollständig einschließlich Image-Verpackung.
+
+GitHub-Abnahme des Implementierungsstands `3ca2d6c8ef6472bafb4ddceeb7e783c86df5ffd1`:
+alle vier abgefragten Push-Workflows erfolgreich (`Server build and integration`,
+`Analog voice isolated tests`, `Installer checks`, `Server code scanning`). Der
+Serverworkflow bestand ausdrücklich auch beide Container-Laufzeitphasen inklusive
+Prebuilt-Compose, Migration und Rollback. Spätere Abschlussänderungen betreffen
+nur Dokumentation; deren eigener CI-Status wird im Abschlussbericht getrennt genannt.

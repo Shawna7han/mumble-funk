@@ -1,5 +1,9 @@
 # B4: experimentelle Murmur-Sprachintegration
 
+Historischer B4-Stand: Die nachfolgende B5-Implementierung und ihre tatsächliche
+Abnahme stehen in [B5](analog-voice-b5.md). Frühere Aussagen zur Unterdrückung
+von Squelch/Noise beschreiben den damaligen B4-Stand.
+
 Stand: 8. November 2026; `feature/analog-voice-live`, bestehender Draft-PR #15.
 B4 verbindet die vorhandene B1–B3-Engine erstmals mit dem Server. Keine
 Betriebsfreigabe; B5 und B6 bleiben eigenständige, noch nicht ausgeführte Phasen.
