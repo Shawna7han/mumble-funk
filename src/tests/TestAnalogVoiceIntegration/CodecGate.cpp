@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <opus.h>
 #include <string>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 extern "C" int __real_opus_decode_float(OpusDecoder *, const unsigned char *, opus_int32, float *, int, int);
@@ -16,8 +17,8 @@ extern "C" int __wrap_opus_decode_float(OpusDecoder *decoder, const unsigned cha
 		const int permit = ::open((std::string(directory) + "/release").c_str(), O_RDONLY);
 		const int ready  = ::open((std::string(directory) + "/entered").c_str(), O_WRONLY);
 		if (ready >= 0) {
-			const char signal  = 'x';
-			const auto written = ::write(ready, &signal, 1);
+			const auto tid     = static_cast< pid_t >(::syscall(SYS_gettid));
+			const auto written = ::write(ready, &tid, sizeof(tid));
 			(void) written;
 			::close(ready);
 		}

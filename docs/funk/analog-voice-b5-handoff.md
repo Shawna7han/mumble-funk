@@ -81,3 +81,11 @@ Der Shutdown-Test bleibt unter LeakSanitizer rot; keine Tests oder Checks wurden
 zur Freigabe abgeschaltet. Ein separater Fix behebt den bestehenden temporären
 QStringBuilder-Pfad im AudioFeedback-Test. Release-Serverintegration und
 isolierte Release-/TSan-Tests bestehen; genaue Zählweise steht im B4-Bericht.
+
+B4-CI-Nachkorrektur: Der Unix-SIGTERM-Notifier wird in main.cpp nicht länger mit
+asynchronem cleanup überschrieben. Shutdown erfolgt dadurch im Qt-Hauptthread;
+Unix-SIGTERM endet regulär mit Exit 0. CodecGate liefert seine Linux-Thread-ID für
+einen deterministischen Worker-SIGTERM-Regressionstest. Der Überlasttest verlangt
+weiterhin exakt inputFull=1, zeigt bei Fehlern Serverstatistik und Exitstatus und
+prüft einen anderen, noch vor Workerfreigabe angenommenen Nachfolgesender.
+Dies ändert keine Überlastgrenze und behebt nicht die bekannten Sanitizer-Befunde.

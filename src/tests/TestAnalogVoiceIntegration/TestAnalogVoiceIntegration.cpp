@@ -4,6 +4,8 @@
 #include <cmath>
 #include <memory>
 #ifdef MUMBLE_TEST_VOICE_GATE_AVAILABLE
+#	include <csignal>
+#	include <sys/syscall.h>
 #	include <fcntl.h>
 #	include <poll.h>
 #	include <sys/stat.h>
@@ -525,6 +527,7 @@ namespace {
 struct CodecGate {
 	QTemporaryDir directory;
 	int entered = -1, release = -1;
+	pid_t workerThread = 0;
 	bool attach(Fixture &fixture) {
 		const auto ready  = directory.filePath("entered").toUtf8();
 		const auto permit = directory.filePath("release").toUtf8();
@@ -539,7 +542,8 @@ struct CodecGate {
 	}
 	bool wait() {
 		pollfd fd{ entered, POLLIN, 0 };
-		return ::poll(&fd, 1, 3000) == 1 && (fd.revents & POLLIN);
+		return ::poll(&fd, 1, 3000) == 1 && (fd.revents & POLLIN)
+			   && ::read(entered, &workerThread, sizeof(workerThread)) == sizeof(workerThread);
 	}
 	void resume() {
 		if (release >= 0) {
@@ -562,9 +566,10 @@ void TestAnalogVoiceIntegration::blockedWorkerOverload() {
 	CodecGate gate;
 	QVERIFY(gate.attach(f));
 	QVERIFY(f.start("true", 5000, 5000, false, "analogvoice=true\n"));
-	Client sender, receiver;
+	Client sender, receiver, successor;
 	QVERIFY(sender.login(f.port, "sender"));
 	QVERIFY(receiver.login(f.port, "receiver"));
+	QVERIFY(successor.login(f.port, "successor"));
 	const auto payload = opus(960);
 	QVERIFY(sendAudio(sender, payload, 0, false));
 	QVERIFY(gate.wait());
@@ -574,20 +579,34 @@ void TestAnalogVoiceIntegration::blockedWorkerOverload() {
 	for (std::uint64_t frame = 2; frame < 18; frame += 2)
 		QVERIFY(sendAudio(sender, payload, frame, false));
 	QVERIFY(sendAudio(sender, {}, 18, true) && sender.barrier());
+	// Admit another sender while the old worker is still blocked. No output
+	// may bypass the predecessor's channel barrier.
+	QVERIFY(sendAudio(successor, payload, 20, true, true) && successor.udpBarrier());
+	QVERIFY(receiver.audio(0).isEmpty());
 	gate.resume();
-	// A later generation must pass the failed predecessor's terminal barrier.
-	QVERIFY(sendAudio(sender, payload, 20, true));
 	Packet packet;
-	bool completed = false;
+	bool completed = false, seenSuccessor = false;
 	for (int i = 0; i < 4 && !completed; ++i) {
 		QVERIFY(receiveAudio(receiver, packet));
 		QVERIFY(packet.payload != payload); // No covert raw fallback after the fault.
-		completed = packet.frame >= 20 && packet.last;
+		if (packet.session == sender.session) {
+			QVERIFY(!seenSuccessor);
+		} else {
+			QCOMPARE(packet.session, successor.session);
+			seenSuccessor = true;
+		}
+		completed = seenSuccessor && packet.frame >= 20 && packet.last;
 	}
 	QVERIFY(completed);
 	f.server.stop();
 	const auto output = f.server.readAll();
-	QVERIFY(output.contains("inputFull=1"));
+	if (!output.contains(" inputFull=1 ") || f.server.exitStatus() != QProcess::NormalExit || f.server.exitCode() != 0)
+		qInfo().noquote() << output;
+	QCOMPARE(f.server.exitStatus(), QProcess::NormalExit);
+	QCOMPARE(f.server.exitCode(), 0);
+	QVERIFY2(
+		output.contains(" inputFull=1 "),
+		qPrintable(QStringLiteral("exitStatus=%1 exitCode=%2").arg(f.server.exitStatus()).arg(f.server.exitCode())));
 }
 void TestAnalogVoiceIntegration::blockedWorkerDisconnectAndShutdown() {
 	B4Fixture f;
@@ -604,13 +623,15 @@ void TestAnalogVoiceIntegration::blockedWorkerDisconnectAndShutdown() {
 	QVERIFY(receiver.receive(Type::UserRemove, removed));
 	QVERIFY(receiver.barrier());
 	// Shutdown must join the active codec while keeping its QObject context alive.
-	f.server.terminate();
+	// Regress the exact failure: deliver SIGTERM to the paused codec thread,
+	// not whichever thread the kernel happens to choose for kill(process).
+	QCOMPARE(::syscall(SYS_tgkill, static_cast< pid_t >(f.server.processId()), gate.workerThread, SIGTERM), 0L);
 	gate.resume();
 	QVERIFY(f.server.waitForFinished(5000));
 	QCOMPARE(f.server.exitStatus(), QProcess::NormalExit);
-	if (f.server.exitCode() != 15)
+	if (f.server.exitCode() != 0)
 		qInfo().noquote() << f.server.readAll();
-	QCOMPARE(f.server.exitCode(), 15);
+	QCOMPARE(f.server.exitCode(), 0);
 	Packet packet;
 	QVERIFY(!receiveAudio(receiver, packet, false, 20));
 }

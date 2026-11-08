@@ -688,7 +688,11 @@ int main(int argc, char **argv) {
 
 	meta->bootAll();
 
+	// Preserve UnixMurmur's SIGTERM notifier: cleanup must run on the main
+	// thread, outside interrupted server/worker locks.
+#ifdef Q_OS_WIN
 	signal(SIGTERM, cleanup);
+#endif
 	signal(SIGINT, cleanup);
 
 	res = a.exec();

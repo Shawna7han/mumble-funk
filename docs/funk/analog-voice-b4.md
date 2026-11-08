@@ -209,3 +209,74 @@ Native Installer-Stagingtests nach vollständigem Release-Neubuild mit
 `BUILD_NUMBER=939`: **5/5 bestanden**. Der erste Versuch mit leerer Buildnummer
 wurde korrekt vom bestehenden Versionsguard abgewiesen; weder Installer noch
 Versionsprüfung wurden angepasst.
+
+## CI-Nachkorrektur: fehlende Überlaststatistik beim Shutdown
+
+Der wiederholte Fehler bei `blockedWorkerOverload` war lokal reproduzierbar:
+14 erfolgreiche Läufe, dann fehlte `inputFull=1`. Die vollständige Ausgabe endete
+bei `Ending voice thread`; nach dem unveränderten 3-s-Watchdog wurde der Server
+gekillt. Ein zusätzlicher strace-Lauf reproduzierte den Fehler sofort und zeigte,
+dass SIGTERM im Codec-Worker ankam (derselbe Thread hatte zuvor die Gate-FIFOs
+geöffnet). `cleanup()` führte dort den Serverabbau aus; Qt meldete ausdrücklich
+`requested database does not belong to the calling thread`.
+
+Die abschließende Statistik fehlte vollständig. Das war kein Nachweis eines
+abweichenden Überlastzählers oder eines vorherigen Expired/Codec-Fehlers. B3 lässt
+bei angehaltenem Worker vier weitere Inputs zu; der nächste Input latcht einmal
+InputFull. Weitere Inputs bleiben Faulted, der Endmarker reserviert den Abschluss.
+Die FIFO-Handshakes ordnen diese Annahme vor der Workerfreigabe. Der erste Fehler
+bleibt gelatcht; der Test verlangt weiterhin genau einen InputFull-Eintrag.
+
+Ursache: `UnixMurmur` installiert bereits einen SIGTERM-Socket/Qt-Notifier, aber
+`main.cpp` überschrieb ihn später mit `signal(SIGTERM, cleanup)`. Dadurch konnte
+Shutdown aus einem beliebigen unterbrochenen Thread bzw. Lockabschnitt erfolgen.
+Die kleine Produktkorrektur lässt den vorhandenen Unix-Notifier bestehen; nur
+Windows behält die direkte Registrierung. Der Hauptthread verlässt danach die
+Ereignisschleife und führt `cleanup(0)` geordnet aus. SIGTERM endet unter Unix damit
+regulär mit Exitcode 0. SIGINT und sonstige Signalpfade wurden nicht verändert.
+
+Testkorrektur und Regression:
+
+- Ein fehlerhafter Statistik-/Shutdown-Befund gibt nun die vollständige
+  Serverausgabe mit vorhandenen Zählerständen sowie Exitstatus/-code aus.
+  Ein fehlender Abschluss wird nicht als alternativer Überlastfehler akzeptiert.
+- Die Überlast- und Raw-Bypass-Prüfungen bleiben erhalten. Ein anderer Sender wird
+  noch bei blockiertem Worker über authentifiziertes UDP angenommen; vor Freigabe
+  darf nichts beim Empfänger ankommen. Nachfolgersprache bleibt hinter dem alten
+  Fehlerabschluss; nach Beginn der Nachfolgersprache darf keine alte Ausgabe folgen.
+  Der UDP-Ping dient als Annahmebarriere ohne TCP-Nagle-Wartezeit im 40-ms-Jobbudget.
+- Der ausschließlich in Linux-Testbuilds vorhandene Codec-Gate meldet seine
+  Thread-ID. Der Shutdown-Test sendet SIGTERM mittels tgkill gezielt an diesen
+  angehaltenen Worker und verlangt geordneten Exit 0. Damit wird der ursprüngliche
+  Fehler nicht nur von der zufälligen Signalauswahl des Kernels abhängig geprüft.
+- Keine produktiven Queue-/Zeit-/Codecgrenzen wurden verändert, keine Prüfung
+  entfernt und kein Timeout erhöht. Die bekannten ASan/UBSan-Befunde bleiben offen.
+
+Gezielte Wiederholungen nach der Signalwegkorrektur: beide Worker-Tests gemeinsam
+in 50 normalen Läufen, 20 Läufen unter `strace -f` und 30 auf eine CPU gebundenen
+Läufen bestanden (100/100 Paare). Der exakte Zählervergleich berücksichtigt nun
+auch Wortgrenzen, damit `inputFull=10` nicht als `inputFull=1` gelten könnte.
+
+Nachkorrektur, native Gesamtabnahme: vollständiger Non-Unity-Release-Serverbuild
+und **37/37 CTest-Targets bestanden**, einschließlich aller bestehenden Server-,
+Simplex-, Squelch- und Noise-Tests; native Installer-Stagingtests **5/5**.
+
+Docker-Nachprüfung: vollständiger Dockerfile-Build unter Ubuntu 24.04 erfolgreich,
+inklusive **37/37 CTest-Targets** und **38/38 Docker-Python-Tests**. Damit wurde die
+Korrektur zusätzlich mit den dortigen Qt5-/libopus-Versionen geprüft.
+
+Umgebungsdetail der Container-Laufzeitprüfung: Die Cloud-Native-Probe war gegen
+libopus 1.5.2 gebaut, das Ubuntu-Image enthält 1.4. Der erste zusätzliche
+Laufzeitlauf scheiterte deshalb beim bytegenauen Busy-Vergleich (`Busy priority
+or bytes changed`). Für die Wiederholung wurde die unveränderte Probe über
+LD_LIBRARY_PATH mit exakt der libopus.so.0 aus dem fertigen Image ausgeführt
+(Version per opus_get_version_string und Auswahl per ldd bestätigt). Weder
+Paketvergleich noch Testskript oder Image wurden dafür verändert. Im GitHub-
+Ubuntu-Workflow verwenden Probe und Image ohnehin dieselbe Opus-Version.
+
+Die angeglichene Container-Laufzeitprüfung bestand vollständig:
+`integration.py --audio-feedback --radio-noise --host-port 64740`, einschließlich
+TCP/verschlüsseltem UDP, bestätigten/Timeout-Abschlüssen mit 62-s-Noise-Fall,
+Busy und unveränderter Sprache, Rootless-Isolation, Neustart/Recreate,
+Portkonflikten, parallelem nativem Server, konsistentem Backup/Restore und
+sauberem Shutdown. Die bekannten ASan-/UBSan-Befunde wurden dabei nicht bearbeitet.
