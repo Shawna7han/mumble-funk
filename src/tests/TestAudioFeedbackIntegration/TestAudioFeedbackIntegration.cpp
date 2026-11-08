@@ -32,7 +32,7 @@ void TestAudioFeedbackIntegration::standardAsset_data() {
 void TestAudioFeedbackIntegration::standardAsset() {
     QFETCH(bool,udp);QFETCH(bool,modern);QFETCH(int,mode);
     const int boost=mode?12:0, volume=mode==2?0:100;
-    const auto path=QStringLiteral(BUSY_ASSET_DIR)+"/busy-tone.wav";
+    const QString path=QStringLiteral(BUSY_ASSET_DIR)+"/busy-tone.wav";
     Fixture f; QVERIFY(f.start("true",5000,5000,false,"audiofeedback=true\nbusytonefile="+path.toUtf8()+"\nbusytonevolume="+QByteArray::number(volume)+"\nfeedbackboostdb="+QByteArray::number(boost)+"\n"));
     Client admin,a,b,observer,outsider;
     QVERIFY(admin.login(f.port,"SuperUser",modern));QVERIFY(a.login(f.port,"Owner",modern));
