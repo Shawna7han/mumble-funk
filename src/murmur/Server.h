@@ -134,7 +134,7 @@ protected:
 						   bool started);
 	void deliverAnalogVoice();
 	AnalogVoiceLifecycle m_analogLifecycle;
-	void requestAnalogCues(const std::vector<SquelchPlan::Cue> &cues, bool timeout = false);
+	void requestAnalogCues(const std::vector< SquelchPlan::Cue > &cues, bool timeout = false);
 	void sendVoicePacket(Mumble::Protocol::AudioData audio, AudioReceiverBuffer &receivers,
 						 Mumble::Protocol::UDPAudioEncoder< Mumble::Protocol::Role::Server > &encoder,
 						 bool immediate = false, funkvoice::AnalogVoiceService::Recipients *delivered = nullptr);

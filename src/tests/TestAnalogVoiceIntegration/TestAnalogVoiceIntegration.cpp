@@ -118,7 +118,12 @@ void TestAnalogVoiceIntegration::profiles() {
 	QVERIFY(decoder && !error);
 	for (std::size_t i = 0; i < expected.count; ++i) {
 		Packet a, b;
-		QVERIFY(receiveAudio(old, a));
+		const bool received = receiveAudio(old, a);
+		if (!received) {
+			f.server.stop();
+			qWarning().noquote() << f.server.readAll();
+		}
+		QVERIFY(received);
 		QVERIFY(receiveAudio(modern, b));
 		QCOMPARE(a.payload, b.payload);
 		QCOMPARE(a.payload, QByteArray(reinterpret_cast< const char * >(expected.packets[i].payload.data()),
@@ -390,7 +395,7 @@ void TestAnalogVoiceIntegration::bandwidthAndEffectBoundary() {
 
 
 #ifdef MUMBLE_TEST_VOICE_GATE_AVAILABLE
-#include "CodecGate.h"
+#	include "CodecGate.h"
 void TestAnalogVoiceIntegration::blockedWorkerOverload() {
 	B4Fixture f;
 	CodecGate gate;

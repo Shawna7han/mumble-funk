@@ -352,3 +352,20 @@ expiry, with no voice/Simplex/cache lock held; QObject context survives the join
 Squelch/Noise are suppressed only for a successfully enabled analog service until
 B5 defines their output-order lifecycle. The disabled path retains its original
 guard-through-send-and-effect contract. See [B4](../funk/analog-voice-b4.md).
+
+### Ordered analog effect lifecycle (B5)
+
+The main-thread dispatcher holds voice write protection across local speech
+handoff and its subsequent original-ticket observation. `AnalogVoiceLifecycle`
+uses one fixed state per service lane/generation; source tickets are observed at
+most once in source order. A send result records local submission only. TLS
+backlog rejection or a failed UDP syscall cannot create a successful recipient.
+Recipient intersections can only shrink. Terminal batches finish the lifecycle
+after the complete speech drain, using the original monotonic end time.
+
+Simplex timeout callbacks reserve `finish` with the timeout frame/time; they
+never take voice protection or access users. Real invalidations may invalidate
+Squelch metadata under its existing short lock. No Squelch operation acquires a
+service, voice or Simplex lock in reverse. The worker never invokes effects.
+AudioFeedback/Noise continue on their existing timer/producer architecture.
+The original direct-path locking and Unix queued SIGTERM shutdown remain intact.

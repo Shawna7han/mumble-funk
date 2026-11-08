@@ -130,7 +130,8 @@ Server::Server(int snum, QObject *p) : QThread(p) {
 														  releaseAnalogVoice(event);
 													  if (m_simplexLogger)
 														  m_simplexLogger->submit(event);
-													  if (!m_analogVoice && m_squelchPlan && event.event == "released" && event.reason != "marker_confirmed") {
+													  if (!m_analogVoice && m_squelchPlan && event.event == "released"
+														  && event.reason != "marker_confirmed") {
 														  if (event.reason == "timeout_suspected" && (m_noiseEnabled || m_squelchTimeoutCloseEnabled)
 															  && (m_noiseEnabled || m_squelchCloseEnabled) && m_audioFeedback) {
 															  // The controller lock serializes this release against the next
@@ -1289,9 +1290,11 @@ bool Server::sendMessage(ServerUser &u, const unsigned char *data, int len, QByt
 #	else
 		using size_type = std::size_t;
 #	endif
-		const bool submitted = ::sendto(u.sUdpSocket, buffer, static_cast< size_type >(len + 4), 0,
-				 reinterpret_cast< struct sockaddr * >(&u.saiUdpAddress),
-				 (u.saiUdpAddress.ss_family == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in)) == len + 4;
+		const bool submitted =
+			::sendto(u.sUdpSocket, buffer, static_cast< size_type >(len + 4), 0,
+					 reinterpret_cast< struct sockaddr * >(&u.saiUdpAddress),
+					 (u.saiUdpAddress.ss_family == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in))
+			== len + 4;
 #endif
 #ifdef Q_OS_WIN
 		if (Meta::hQoS && dwFlow)
@@ -1306,7 +1309,8 @@ bool Server::sendMessage(ServerUser &u, const unsigned char *data, int len, QByt
 			// Dispatcher already holds voice write protection and has revalidated
 			// the complete connection identity. Do not enqueue a session-only event.
 			Q_ASSERT(QThread::currentThread() == thread());
-			if (!u.feedbackWritable()) return false;
+			if (!u.feedbackWritable())
+				return false;
 			tcpTransmitData(cache, u.uiSession);
 		} else {
 			emit tcpTransmit(cache, u.uiSession);
@@ -1359,10 +1363,11 @@ void Server::updateSimplexPermission(ServerUser &user) {
 	// Caller holds qrwlVoiceThread for write; no packet can pass the changed permission.
 	syncAnalogVoice(user);
 	if (m_squelchPlan && (user.bMute || user.bSuppress || user.bSelfMute || user.bDeaf || user.bSelfDeaf)) {
-        if (m_analogVoice && !(user.bMute || user.bSuppress || user.bSelfMute))
-            m_squelchPlan->invalidateRecipient(user.diagnosticConnection);
-        else m_squelchPlan->invalidate(user.diagnosticConnection);
-    }
+		if (m_analogVoice && !(user.bMute || user.bSuppress || user.bSelfMute))
+			m_squelchPlan->invalidateRecipient(user.diagnosticConnection);
+		else
+			m_squelchPlan->invalidate(user.diagnosticConnection);
+	}
 	if (m_simplex && (user.bMute || user.bSuppress || user.bSelfMute)) {
 		m_simplex->invalidate(user.diagnosticConnection, QStringLiteral("permission_lost"));
 	}
@@ -1646,10 +1651,11 @@ void Server::sendVoicePacket(Mumble::Protocol::AudioData audioData, AudioReceive
 
 			// Send encoded packet to all receivers of this range
 			for (auto it = currentRange.begin; it != currentRange.end; ++it) {
-				if (sendMessage(it->getReceiver(), encodedPacket.data(), static_cast< int >(encodedPacket.size()), tcpCache,
-							false, immediate) && delivered && it->getReceiver().bOpus
-                    && delivered->count < funkvoice::AnalogVoiceService::MaxRecipients)
-                    delivered->identities[delivered->count++] = it->getReceiver().analogIdentity;
+				if (sendMessage(it->getReceiver(), encodedPacket.data(), static_cast< int >(encodedPacket.size()),
+								tcpCache, false, immediate)
+					&& delivered && it->getReceiver().bOpus
+					&& delivered->count < funkvoice::AnalogVoiceService::MaxRecipients)
+					delivered->identities[delivered->count++] = it->getReceiver().analogIdentity;
 			}
 
 			// Find next range
@@ -2167,12 +2173,14 @@ void Server::deliverAudioFeedback() {
 				&& user->cChannel && static_cast<unsigned int>(user->cChannel->iId) == id.channel;
 		};
 		if (!matches(cue.sender) || !matches(cue.recipient)) return false;
-		const auto *source = qhUsers.value(cue.sender.session);
+		auto *source         = qhUsers.value(cue.sender.session);
 		const auto *receiver = qhUsers.value(cue.recipient.session);
         // Continuous optional traffic must not build a long TCP backlog. Keep
         // the previous Busy/Squelch budget when radio noise is disabled.
-		if (source->bMute || source->bSuppress || source->bSelfMute || receiver->bDeaf || receiver->bSelfDeaf
-			|| !receiver->bOpus || !receiver->feedbackWritable()) return false;
+		if ((m_analogVoice && !ChanACL::hasPermission(source, source->cChannel, ChanACL::Speak, nullptr))
+			|| source->bMute || source->bSuppress || source->bSelfMute || receiver->bDeaf || receiver->bSelfDeaf
+			|| !receiver->bOpus || !receiver->feedbackWritable())
+			return false;
 		return starting ? m_squelchPlan->consume(cue, cue.sender, cue.recipient, true) : m_squelchPlan->current(cue);
 	}, [this](const AudioFeedback::Recipient &recipient, bool continuous) {
 		const auto *receiver = qhUsers.value(recipient.session);

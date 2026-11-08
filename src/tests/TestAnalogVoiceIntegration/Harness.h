@@ -61,7 +61,7 @@ inline QByteArray opus(int samples) {
 	return result;
 }
 inline bool sendAudio(Client &client, const QByteArray &payload, std::uint64_t frame, bool last, bool udp = false,
-			   float x = 1.25f) {
+					  float x = 1.25f) {
 	Mumble::Protocol::AudioData audio;
 	audio.payload                = { reinterpret_cast< const unsigned char * >(payload.constData()),
                       static_cast< std::size_t >(payload.size()) };

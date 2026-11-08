@@ -93,8 +93,9 @@ void Server::releaseAnalogVoice(const SimplexController::Event &event) {
 			m_analogVoice->finish(entry.handle, event.frame, Service::Time(std::chrono::microseconds(event.timeUs)));
 		else {
 			m_analogVoice->cancel(entry.handle);
-            if (m_squelchPlan) m_squelchPlan->invalidate(event.context.connection);
-        }
+			if (m_squelchPlan)
+				m_squelchPlan->invalidate(event.context.connection);
+		}
 		entry = {};
 	}
 }
@@ -179,8 +180,11 @@ void Server::deliverAnalogVoice() {
 		auto *sender = qhUsers.value(batch.completed.sender.session, nullptr);
 		if (!sender || !(sender->analogIdentity == batch.completed.sender)
 			|| sender->sState != ServerUser::Authenticated || !sender->cChannel || sender->bMute || sender->bSuppress
-			|| sender->bSelfMute || !ChanACL::hasPermission(sender, sender->cChannel, ChanACL::Speak, nullptr))
+			|| sender->bSelfMute || !ChanACL::hasPermission(sender, sender->cChannel, ChanACL::Speak, nullptr)) {
+			if (m_squelchPlan)
+				m_squelchPlan->invalidate(batch.completed.sender.connection);
 			continue;
+		}
 		for (std::size_t i = 0; i < batch.audio.count; ++i) {
 			const auto &packet = batch.audio.packets[i];
 			Mumble::Protocol::AudioData audio;
@@ -208,27 +212,28 @@ void Server::deliverAnalogVoice() {
 				receivers.addReceiver(*sender, *receiver, Mumble::Protocol::AudioContext::NORMAL, positional);
 			}
 			Service::Recipients delivered;
-            sendVoicePacket(audio, receivers, encoder, true, &delivered);
-            if (m_squelchPlan)
-                requestAnalogCues(m_analogLifecycle.delivered(*m_squelchPlan, batch, i, delivered));
+			sendVoicePacket(audio, receivers, encoder, true, &delivered);
+			if (m_squelchPlan)
+				requestAnalogCues(m_analogLifecycle.delivered(*m_squelchPlan, batch, i, delivered));
 		}
-        if (m_squelchPlan)
-            requestAnalogCues(m_analogLifecycle.complete(*m_squelchPlan, batch), batch.completed.technical);
+		if (m_squelchPlan)
+			requestAnalogCues(m_analogLifecycle.complete(*m_squelchPlan, batch), batch.completed.technical);
 	}
 	qrwlVoiceThread.unlock();
 }
 
-void Server::requestAnalogCues(const std::vector<SquelchPlan::Cue> &cues, bool timeout) {
-    for (const auto &cue : cues) {
-        if (cue.kind == SquelchPlan::Kind::Open) {
-            if (m_noiseEnabled) m_audioFeedback->requestNoise(cue);
-            if (!m_squelchOpenEnabled) {
-                m_squelchPlan->consume(cue, cue.sender, cue.recipient, true);
-                continue;
-            }
-        } else if (!m_squelchCloseEnabled || (timeout && !m_squelchTimeoutCloseEnabled)) {
-            continue;
-        }
-        m_audioFeedback->requestSquelch(cue);
-    }
+void Server::requestAnalogCues(const std::vector< SquelchPlan::Cue > &cues, bool timeout) {
+	for (const auto &cue : cues) {
+		if (cue.kind == SquelchPlan::Kind::Open) {
+			if (m_noiseEnabled)
+				m_audioFeedback->requestNoise(cue);
+			if (!m_squelchOpenEnabled) {
+				m_squelchPlan->consume(cue, cue.sender, cue.recipient, true);
+				continue;
+			}
+		} else if (!m_squelchCloseEnabled || (timeout && !m_squelchTimeoutCloseEnabled)) {
+			continue;
+		}
+		m_audioFeedback->requestSquelch(cue);
+	}
 }

@@ -655,7 +655,8 @@ AnalogVoiceService::Receipt AnalogVoiceService::finish(Handle handle, std::uint6
 		return { Admission::Closed, entry->end.ticket };
 	}
 	entry->end.ticket = impl.ticket(*entry, lastSourceFrame, 0, true, true);
-	if (endedAt != Time{}) entry->end.ticket.accepted = endedAt;
+	if (endedAt != Time{})
+		entry->end.ticket.accepted = endedAt;
 	entry->closing    = true;
 	if (!entry->end.ticket.channelTicket) {
 		impl.fault(*entry, Failure::Sequence);
@@ -704,7 +705,7 @@ bool AnalogVoiceService::take(Batch &batch) {
 			continue;
 		}
 		batch            = entry.output;
-		batch.handle = entry.handle;
+		batch.handle     = entry.handle;
 		batch.recipients = {};
 		for (std::size_t i = 0; i < entry.recipients.count; ++i) {
 			Impl::Connection *recipient = impl.connection(entry.recipients.identities[i]);

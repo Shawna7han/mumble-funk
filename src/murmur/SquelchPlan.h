@@ -41,8 +41,9 @@ public:
 	explicit SquelchPlan(bool enabled = false, Clock clock = {});
 	// validOpus refers to a validated nonempty payload. Empty markers cannot start
 	// a stream. Caller-accepted payloads stay untouched even when planning fails.
-	std::vector<Cue> observe(Identity sender, bool allowed, std::uint64_t frame,
-		bool payload, bool last, bool validOpus, const std::vector<Identity> &eligibleRecipients, std::int64_t endedAtUs = -1);
+	std::vector< Cue > observe(Identity sender, bool allowed, std::uint64_t frame, bool payload, bool last,
+							   bool validOpus, const std::vector< Identity > &eligibleRecipients,
+							   std::int64_t endedAtUs = -1);
 	// Called only for an actual Simplex timeout release, never to grant speech or
 	// manufacture an end marker. Capture the existing generation before a new
 	// owner can start. Repeated/confirmed ends and unobserved payloads yield no cue.
@@ -57,8 +58,8 @@ public:
 	void invalidate(std::uint64_t connection);
 	void invalidateRecipient(std::uint64_t connection);
 	// Dispatcher-only completion of an already observed original payload.
-	std::vector<Cue> end(Identity sender, std::uint64_t lastSourceFrame, std::int64_t endedAtUs);
-	void retainRecipients(Identity sender, const std::vector<Identity> &delivered);
+	std::vector< Cue > end(Identity sender, std::uint64_t lastSourceFrame, std::int64_t endedAtUs);
+	void retainRecipients(Identity sender, const std::vector< Identity > &delivered);
 	void clear();
 	std::size_t size() const;
 
