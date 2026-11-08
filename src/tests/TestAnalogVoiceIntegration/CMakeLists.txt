@@ -1,0 +1,13 @@
+add_executable(TestAnalogVoiceIntegration TestAnalogVoiceIntegration.cpp)
+set_target_properties(TestAnalogVoiceIntegration PROPERTIES AUTOMOC ON)
+target_link_libraries(TestAnalogVoiceIntegration PRIVATE shared Qt5::Test funk-voice-service)
+target_compile_definitions(TestAnalogVoiceIntegration PRIVATE B4_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/audio" MUMBLE_SERVER_PATH="$<TARGET_FILE:mumble-server>")
+add_dependencies(TestAnalogVoiceIntegration mumble-server)
+add_test(NAME TestAnalogVoiceIntegration COMMAND $<TARGET_FILE:TestAnalogVoiceIntegration>)
+set_tests_properties(TestAnalogVoiceIntegration PROPERTIES TIMEOUT 120)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_sources(mumble-server PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/CodecGate.cpp")
+    target_link_options(mumble-server PRIVATE -Wl,--wrap=opus_decode_float)
+    target_compile_definitions(TestAnalogVoiceIntegration PRIVATE MUMBLE_TEST_VOICE_GATE_AVAILABLE)
+endif()

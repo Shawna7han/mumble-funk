@@ -44,6 +44,7 @@ set(MURMUR_SOURCES
 	"Register.cpp"
 	"RPC.cpp"
 	"Server.cpp"
+	"ServerAnalogVoice.cpp"
 	"Server.h"
 	"ServerDB.cpp"
 	"ServerDB.h"
@@ -97,7 +98,7 @@ target_include_directories(mumble-server PRIVATE
 	${SHARED_SOURCE_DIR}
 )
 
-target_link_libraries(mumble-server PRIVATE shared Qt5::Sql Threads::Threads audio-feedback)
+target_link_libraries(mumble-server PRIVATE shared Qt5::Sql Threads::Threads audio-feedback funk-voice-service)
 
 if(static)
 	# MariaDB and MySQL

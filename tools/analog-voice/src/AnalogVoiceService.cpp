@@ -182,8 +182,16 @@ struct AnalogVoiceService::Impl {
 		changed.notify_one();
 	}
 	Ticket ticket(Lane &entry, std::uint64_t frame, std::uint32_t samples, bool end, bool technical) {
-		return { entry.sender, entry.handle.generation, entry.sender.epoch, serial(), frame, samples, end, technical,
-				 clock() };
+		return { entry.sender,
+				 entry.handle.generation,
+				 entry.sender.epoch,
+				 serial(),
+				 frame,
+				 samples,
+				 end,
+				 technical,
+				 clock(),
+				 {} };
 	}
 	// Called with the mutex held. Result capacity belongs exclusively to this
 	// worker from selection until publication; producers can only invalidate it.
@@ -594,6 +602,7 @@ AnalogVoiceService::Receipt AnalogVoiceService::submit(Handle handle, const Inpu
 	}
 	Impl::Job job;
 	job.ticket = impl.ticket(*entry, input.frame, input.samples, input.end, false);
+	job.ticket.metadata = input.metadata;
 	if (!job.ticket.channelTicket) {
 		impl.fault(*entry, Failure::Sequence);
 		return { Admission::Faulted, {} };

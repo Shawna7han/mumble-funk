@@ -331,6 +331,8 @@ void MetaParams::read(QString fname) {
 		qFatal("feedbackboostdb must be an integer from 0 to 12 dB");
 	feedbackBoostDb = boostText.toInt();
 	simplex                    = typeCheckedFromSettings("simplex", simplex);
+	analogVoice                = typeCheckedFromSettings("analogvoice", analogVoice);
+	analogVoiceProfile         = typeCheckedFromSettings("analogvoiceprofile", analogVoiceProfile);
 	simplexTimeout             = typeCheckedFromSettings("simplextimeout", simplexTimeout);
 	simplexRetryTimeout        = typeCheckedFromSettings("simplexretrytimeout", simplexRetryTimeout);
 	simplexDiagnostics         = typeCheckedFromSettings("simplexdiagnostics", simplexDiagnostics);
@@ -490,6 +492,8 @@ void MetaParams::read(QString fname) {
 	qmConfig.insert(QStringLiteral("feedbackboostdb"), QString::number(feedbackBoostDb));
 	qmConfig.insert(QStringLiteral("busytonevolume"), QString::number(busyToneVolume));
 	qmConfig.insert(QStringLiteral("simplex"), simplex ? QStringLiteral("true") : QStringLiteral("false"));
+	qmConfig.insert(QStringLiteral("analogvoice"), analogVoice);
+	qmConfig.insert(QStringLiteral("analogvoiceprofile"), analogVoiceProfile);
 	qmConfig.insert(QStringLiteral("simplextimeout"), QString::number(simplexTimeout));
 	qmConfig.insert(QStringLiteral("simplexretrytimeout"), QString::number(simplexRetryTimeout));
 	qmConfig.insert(QStringLiteral("simplexdiagnostics"),

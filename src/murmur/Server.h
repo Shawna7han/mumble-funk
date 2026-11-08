@@ -117,7 +117,24 @@ protected:
 	bool m_noiseEnabled = false;
 	QTimer *m_audioFeedbackTimer = nullptr;
 	void deliverAudioFeedback();
-	void updateSimplexPermission(const ServerUser &user);
+	void updateSimplexPermission(ServerUser &user);
+	std::unique_ptr< funkvoice::AnalogVoiceService > m_analogVoice;
+	struct AnalogTransmission {
+		std::uint64_t connection = 0;
+		funkvoice::AnalogVoiceService::Handle handle;
+	};
+	// Accessed only under the Simplex mutex, including release callbacks.
+	std::array< AnalogTransmission, funkvoice::AnalogVoiceService::MaxTransmissions > m_analogTransmissions{};
+	void initializeAnalogVoice();
+	void shutdownAnalogVoice();
+	void syncAnalogVoice(ServerUser &user);
+	void releaseAnalogVoice(const SimplexController::Event &event);
+	void submitAnalogVoice(ServerUser &user, const Mumble::Protocol::AudioData &audio, AudioReceiverBuffer &receivers,
+						   bool started);
+	void deliverAnalogVoice();
+	void sendVoicePacket(Mumble::Protocol::AudioData audio, AudioReceiverBuffer &receivers,
+						 Mumble::Protocol::UDPAudioEncoder< Mumble::Protocol::Role::Server > &encoder,
+						 bool immediate = false);
 	std::uint64_t m_nextDiagnosticConnection = 0;
 	void recordVoicePacket(const ServerUser &user, const Mumble::Protocol::AudioData &audio,
 						   VoiceDiagnosticRecord::Transport transport);
@@ -342,7 +359,8 @@ public:
 	void addListener(QHash< ServerUser *, VolumeAdjustment > &listeners, ServerUser &user, const Channel &channel);
 	void processMsg(ServerUser *u, Mumble::Protocol::AudioData audioData, AudioReceiverBuffer &buffer,
 					Mumble::Protocol::UDPAudioEncoder< Mumble::Protocol::Role::Server > &encoder);
-	void sendMessage(ServerUser &u, const unsigned char *data, int len, QByteArray &cache, bool force = false);
+	void sendMessage(ServerUser &u, const unsigned char *data, int len, QByteArray &cache, bool force = false,
+					 bool immediate = false);
 	void run();
 
 	bool validateChannelName(const QString &name);

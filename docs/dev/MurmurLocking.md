@@ -323,3 +323,32 @@ Simplex and service locks, then destroy service/server data. Shutdown is idempot
 but concurrent shutdown callers/destruction are not supported. Keep the Wake
 context alive until join returns. See [B3](../funk/analog-voice-b3.md) and the
 [B4 handoff](../funk/analog-voice-b4-handoff.md) for remaining integration work.
+
+### Experimental Server integration (B4)
+
+With a successfully configured `analogvoice=true` service, `processMsg` replaces
+local submission with `open`/`submit` while its original Transmission guard still
+owns the Simplex mutex. `started` alone opens a generation. The order is voice
+read/write -> Simplex -> short service mutex. `m_analogTransmissions` is accessed
+only under Simplex; ServerUser identities are published under voice write. Pure
+receive changes use `setReceive`; send/channel changes use `update`.
+
+The release sink only reserves `finish` on timeout or `cancel` on invalidation;
+confirmed markers remain valid until their admitted payload ends. It takes no
+voice lock and accesses no users. No worker takes a server lock or touches Qt
+network objects. No executing codec call owns a server/Simplex lock.
+
+The queued main-thread dispatcher acquires voice **write** with try-lock before
+acknowledging or popping anything. A failed try-lock leaves the coalesced service
+notification pending and schedules one context-bound retry. After `take` releases
+the service mutex, identities and permissions are checked and the shared
+`sendVoicePacket` path packages the packet. The write lock also excludes UDP
+updates of its destination scratch state. TCP is submitted immediately in this
+main-thread path, with a bounded TLS backlog check; no new session-only queued
+transmit may outlive that identity check. The default direct path retains its
+original signal behavior. Worker join occurs after stopping UDP and Simplex
+expiry, with no voice/Simplex/cache lock held; QObject context survives the join.
+
+Squelch/Noise are suppressed only for a successfully enabled analog service until
+B5 defines their output-order lifecycle. The disabled path retains its original
+guard-through-send-and-effect contract. See [B4](../funk/analog-voice-b4.md).

@@ -41,6 +41,13 @@ public:
 		std::size_t lane         = MaxTransmissions;
 		explicit operator bool() const noexcept { return generation != 0; }
 	};
+	// Copied with source tickets, never borrowed from a network decoder. The
+	// audience prevents a later context match from revealing old positions.
+	struct Metadata {
+		std::array< float, 3 > position{};
+		std::array< std::uint64_t, MaxRecipients > positionalConnections{};
+		bool positional = false;
+	};
 	struct Ticket {
 		Identity sender;
 		std::uint64_t generation = 0, routingGeneration = 0, channelTicket = 0;
@@ -48,6 +55,7 @@ public:
 		std::uint32_t samples     = 0;
 		bool end = false, technical = false;
 		Time accepted{};
+		Metadata metadata;
 	};
 	struct Input {
 		const unsigned char *payload = nullptr;
@@ -57,6 +65,7 @@ public:
 		std::uint32_t samples = 0;
 		bool end              = false;
 		Recipients recipients;
+		Metadata metadata;
 	};
 	enum class Admission { Accepted, Stopped, Stale, Invalid, InputFull, Faulted, Closed };
 	enum class Failure { None, InputFull, Expired, Codec, Sequence };
