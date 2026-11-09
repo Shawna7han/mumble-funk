@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -61,10 +62,48 @@ class SquelchAdminTests(unittest.TestCase):
         # Staging must report its actual source, not pretend to be the feature head.
         branch = subprocess.check_output(['git', '-C', str(REPO), 'branch', '--show-current'], text=True).strip()
         self.assertIn('branch='+branch+'\n', info)
-        self.assertIn('experimental='+str(branch in ('dev', 'feature/squelch-audio', 'feature/audio-volume', 'feature/busy-tone-asset', 'feature/audio-defaults', 'feature/radio-noise')).lower()+'\n', info)
+        self.assertIn('experimental='+str(branch in ('dev', 'feature/squelch-audio', 'feature/audio-volume', 'feature/busy-tone-asset', 'feature/audio-defaults', 'feature/radio-noise', 'feature/analog-voice-live')).lower()+'\n', info)
         revision = subprocess.check_output(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], text=True).strip()
         self.assertIn('revision='+revision+'\n', info)
         self.assertFalse((self.root/'etc/systemd/system/mumble-funk-audio-engine.service').exists())
+
+    def test_build_info_branch_matrix_and_detached_checkout(self):
+        # Keep the real checkout untouched and exercise actual Git metadata,
+        # including the detached checkout used by pull-request CI.
+        checkout = self.root/'metadata-source'
+        shutil.copytree(REPO/'scripts/funk', checkout/'scripts/funk')
+        shutil.copytree(REPO/'assets/audio', checkout/'assets/audio')
+
+        def git(*args):
+            return subprocess.check_output(['git', '-C', str(checkout), *args],
+                                           text=True, stderr=subprocess.PIPE).strip()
+
+        git('init', '-b', 'metadata-fixture')
+        git('-c', 'user.name=Shawna7han', '-c',
+            'user.email=343870343+Shawna7han@users.noreply.github.com',
+            'commit', '--allow-empty', '-m', 'Installation metadata fixture')
+        revision = git('rev-parse', 'HEAD')
+        cases = [
+            ('stable', False), ('funk-v0.1', False), ('dev', True),
+            ('feature/squelch-audio', True), ('feature/audio-volume', True),
+            ('feature/busy-tone-asset', True), ('feature/audio-defaults', True),
+            ('feature/radio-noise', True), ('feature/analog-voice-live', True),
+            ('feature/not-supported', False), ('', False),
+        ]
+        for index, (branch, experimental) in enumerate(cases):
+            with self.subTest(branch=branch or 'detached'):
+                if branch:
+                    git('switch', '-c', branch)
+                else:
+                    git('switch', '--detach', 'HEAD')
+                stage = self.root/f'metadata-stage-{index}'
+                subprocess.run(['bash', str(checkout/'scripts/funk/install.sh'),
+                                '--setup', '--stage', str(stage), str(BINARY)],
+                               check=True, capture_output=True)
+                info = (stage/'opt/mumble-funk/current/BUILD-INFO').read_text()
+                self.assertIn(f'branch={branch}\n', info)
+                self.assertIn(f'experimental={str(experimental).lower()}\n', info)
+                self.assertIn(f'revision={revision}\n', info)
 
     def test_noise_status_missing_values_preserves_all_legacy_fields(self):
         # Explicit pre-existing schema: new fields must only extend this object.
