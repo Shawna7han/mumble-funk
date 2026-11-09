@@ -7,6 +7,7 @@
 #define MUMBLE_CRYPTOGRAPHICHASH_H_
 
 #include <QByteArray>
+#include <memory>
 
 class CryptographicHashPrivate;
 
@@ -46,6 +47,7 @@ public:
 	/// to incrementally compute a cryptographic hash using the
 	/// hash function specified in |algo|.
 	CryptographicHash(Algorithm algo);
+	~CryptographicHash();
 
 	/// addData adds the content of |buf| to the hash computation.
 	///
@@ -65,7 +67,7 @@ public:
 
 private:
 	CryptographicHash();
-	CryptographicHashPrivate *d;
+	std::unique_ptr< CryptographicHashPrivate > d;
 };
 
 #endif

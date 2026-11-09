@@ -2,6 +2,7 @@
 class TestAnalogVoiceIntegration : public QObject {
 	Q_OBJECT
 private slots:
+	void shutdownWithPermissionCache();
 	void disabledEffects_data();
 	void disabledEffects();
 	void disabled_data();
@@ -22,6 +23,24 @@ private slots:
 	void blockedWorkerDisconnectAndShutdown();
 #endif
 };
+void TestAnalogVoiceIntegration::shutdownWithPermissionCache() {
+	B4Fixture f;
+	QVERIFY(f.start("true", 2500, 3000, false, "analogvoice=true\n"));
+	Client sender, receiver;
+	QVERIFY(sender.login(f.port, "sender"));
+	QVERIFY(receiver.login(f.port, "receiver"));
+	for (auto *client : { &sender, &receiver }) {
+		MumbleProto::PermissionQuery query;
+		query.set_channel_id(0);
+		QVERIFY(client->send(Type::PermissionQuery, query));
+		QByteArray reply;
+		QVERIFY(client->receive(Type::PermissionQuery, reply));
+		QVERIFY(client->barrier());
+	}
+	f.server.stop();
+	const auto output = f.server.readAll();
+	QVERIFY2(f.server.exitStatus() == QProcess::NormalExit && f.server.exitCode() == 0, output.constData());
+}
 void TestAnalogVoiceIntegration::disabledEffects_data() {
 	QTest::addColumn< QByteArray >("config");
 	QTest::newRow("missing") << QByteArray();
@@ -422,7 +441,12 @@ void TestAnalogVoiceIntegration::blockedWorkerOverload() {
 	Packet packet;
 	bool completed = false, seenSuccessor = false;
 	for (int i = 0; i < 4 && !completed; ++i) {
-		QVERIFY(receiveAudio(receiver, packet));
+		const bool received = receiveAudio(receiver, packet);
+		if (!received) {
+			f.server.stop();
+			qWarning().noquote() << "overload/successor TCP receive; input=20ms; gate released" << f.server.readAll();
+		}
+		QVERIFY(received);
 		QVERIFY(packet.payload != payload); // No covert raw fallback after the fault.
 		if (packet.session == sender.session) {
 			QVERIFY(!seenSuccessor);

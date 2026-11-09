@@ -1,3 +1,4 @@
+#include "UDPTunnelHeader.h"
 // Copyright 2007-2023 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
@@ -475,7 +476,13 @@ Server::~Server() {
 	if (hNotify)
 		CloseHandle(hNotify);
 #endif
-	clearACLCache();
+	// All producers are stopped. Do not repopulate caches by notifying clients
+	// during destruction, as clearACLCache() intentionally does at runtime.
+	{
+		QMutexLocker lock(&qmCache);
+		qDeleteAll(acCache);
+		acCache.clear();
+	}
 
 	log("Stopped");
 }
@@ -2200,9 +2207,7 @@ void Server::tcpTransmitData(QByteArray a, unsigned int id) {
 
 		qba.resize(len + 6);
 		unsigned char *uc = reinterpret_cast< unsigned char * >(qba.data());
-		*reinterpret_cast< quint16 * >(&uc[0]) =
-			qToBigEndian(static_cast< quint16 >(Mumble::Protocol::TCPMessageType::UDPTunnel));
-		*reinterpret_cast< quint32 * >(&uc[2]) = qToBigEndian(static_cast< quint32 >(len));
+		Mumble::Protocol::writeUDPTunnelHeader(uc, static_cast< quint32 >(len));
 		memcpy(uc + 6, a.constData(), static_cast< std::size_t >(len));
 
 		c->sendMessage(qba);

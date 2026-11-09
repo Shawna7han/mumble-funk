@@ -142,10 +142,10 @@ CryptographicHash::CryptographicHash() : d(nullptr) {
 CryptographicHash::CryptographicHash(CryptographicHash::Algorithm algo) : d(nullptr) {
 	switch (algo) {
 		case CryptographicHash::Sha1:
-			d = new CryptographicHashPrivate(EVP_sha1());
+			d = std::make_unique< CryptographicHashPrivate >(EVP_sha1());
 			break;
 		case CryptographicHash::Sha256:
-			d = new CryptographicHashPrivate(EVP_sha256());
+			d = std::make_unique< CryptographicHashPrivate >(EVP_sha256());
 			break;
 	}
 }
@@ -162,3 +162,5 @@ QByteArray CryptographicHash::result() const {
 	}
 	return QByteArray();
 }
+
+CryptographicHash::~CryptographicHash() = default;

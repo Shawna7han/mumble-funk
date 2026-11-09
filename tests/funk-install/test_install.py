@@ -19,6 +19,35 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 class InstallationTests(unittest.TestCase):
+    def test_analog_update_preserves_dev_state_and_rollback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage = root / "stage"
+            binary = root / "server"
+            command = ["bash", str(REPO / "scripts/funk/install.sh"), "--experimental-analog-voice", "--stage", str(stage), str(binary)]
+            binary.write_text('#!/bin/sh\necho "Mumble server 1.5.939 dev fixture"\n')
+            binary.chmod(0o755)
+            subprocess.run(command, check=True, capture_output=True)
+            prior = (stage / "opt/mumble-funk/current").resolve()
+            (prior / "BUILD-INFO").write_text("branch=dev\nexperimental=true\n")
+            config = stage / "etc/mumble-funk/server.ini"
+            config.write_text(config.read_text().replace("port=64739", "port=64745")+"\nanalogvoice=false\nanalogvoiceprofile=narrowband\n")
+            db = stage / "var/lib/mumble-funk/server.sqlite"
+            with sqlite3.connect(db) as connection:
+                connection.execute("CREATE TABLE operator_data (value TEXT)")
+                connection.execute("INSERT INTO operator_data VALUES ('channels/users/ACL fixture')")
+            custom = stage / "etc/mumble-funk/sounds/operator.wav"
+            custom.write_bytes(b"operator recording")
+            protected = {p:p.read_bytes() for p in (config,db,custom)}
+            binary.write_text('#!/bin/sh\necho "Mumble server 1.5.939 analog fixture"\n')
+            subprocess.run(command, check=True, capture_output=True)
+            self.assertEqual((stage/"opt/mumble-funk/previous").resolve(),prior)
+            for path, content in protected.items(): self.assertEqual(path.read_bytes(),content)
+            info=(stage/"opt/mumble-funk/current/BUILD-INFO").read_text()
+            self.assertIn("branch=feature/analog-voice-live",info)
+            self.assertIn("experimental=true",info)
+            self.assertIn("port=64745",config.read_text())
+
     def test_supported_operating_systems(self):
         # Point releases use VERSION_ID=24.04/26.04, not the display version.
         cases = [("ubuntu", "24.04", True), ("ubuntu", "26.04", True),

@@ -118,6 +118,44 @@ class SourceTests(unittest.TestCase):
         self.git("push", str(self.remote), "HEAD:refs/heads/dev")
         self.guard(False, experimental="--experimental-dev")
 
+    def analog_voice(self):
+        branch = "feature/analog-voice-live"
+        self.git("checkout", "-B", branch, self.head)
+        self.git("update-ref", f"refs/remotes/origin/{branch}", self.head)
+        self.git("push", str(self.remote), f"HEAD:refs/heads/{branch}")
+
+    def test_analog_voice_flag_and_branch(self):
+        self.analog_voice()
+        for flag in (False, "--experimental-dev", "--experimental-radio-noise", "--experimental-squelch"):
+            self.guard(False, experimental=flag)
+        self.guard(True, experimental="--experimental-analog-voice")
+        for branch in ("stable", "dev", "feature/unknown-audio", "feature/radio-noise"):
+            self.git("checkout", "-B", branch, self.head)
+            self.guard(False, experimental="--experimental-analog-voice")
+
+    def test_analog_voice_publication_and_cleanliness(self):
+        self.analog_voice()
+        flag = "--experimental-analog-voice"
+        ref = "refs/remotes/origin/feature/analog-voice-live"
+        self.git("update-ref", ref, "HEAD~1")
+        self.guard(False, experimental=flag)
+        self.git("update-ref", ref, self.head)
+        self.run_git("--git-dir", str(self.remote), "update-ref", "refs/heads/feature/analog-voice-live", self.head+"~1")
+        self.guard(False, experimental=flag)
+        self.git("push", str(self.remote), "HEAD:refs/heads/feature/analog-voice-live")
+        dirty = self.repo / "README.md"
+        original = dirty.read_bytes()
+        dirty.write_bytes(original + b"changed")
+        self.guard(False, experimental=flag)
+        dirty.write_bytes(original)
+        extra = self.repo / "unpublished.txt"
+        extra.write_text("unpublished")
+        self.guard(False, experimental=flag)
+        extra.unlink()
+        self.git("commit", "--allow-empty", "-m", "Unpublished analog source")
+        self.git("update-ref", ref, "HEAD")
+        self.guard(False, experimental=flag)
+
     def feature(self):
         self.git("checkout", "-B", "feature/squelch-audio", self.head)
         self.git("update-ref", "refs/remotes/origin/feature/squelch-audio", self.head)

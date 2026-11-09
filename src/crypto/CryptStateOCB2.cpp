@@ -244,9 +244,16 @@ typedef subblock keyblock[BLOCKSIZE];
 #define HIGHBIT (1 << SHIFTBITS);
 
 
-static void inline XOR(subblock *dst, const subblock *a, const subblock *b) {
-	for (int i = 0; i < BLOCKSIZE; i++) {
-		dst[i] = a[i] ^ b[i];
+static void inline XOR(void *dst, const void *a, const void *b) {
+	auto *out         = static_cast< unsigned char * >(dst);
+	const auto *left  = static_cast< const unsigned char * >(a);
+	const auto *right = static_cast< const unsigned char * >(b);
+	for (std::size_t i = 0; i < BLOCKSIZE; ++i) {
+		subblock x, y;
+		memcpy(&x, left + i * sizeof(subblock), sizeof(x));
+		memcpy(&y, right + i * sizeof(subblock), sizeof(y));
+		x ^= y;
+		memcpy(out + i * sizeof(subblock), &x, sizeof(x));
 	}
 }
 
@@ -276,7 +283,7 @@ static void inline ZERO(keyblock &block) {
 		EVP_CIPHER_CTX_set_padding(enc_ctx, 0);                                                     \
 		EVP_EncryptUpdate(enc_ctx, reinterpret_cast< unsigned char * >(dst), &outlen,               \
 						  reinterpret_cast< const unsigned char * >(src), AES_BLOCK_SIZE);          \
-		EVP_EncryptFinal_ex(enc_ctx, reinterpret_cast< unsigned char * >((dst) + outlen), &outlen); \
+		EVP_EncryptFinal_ex(enc_ctx, (reinterpret_cast< unsigned char * >(dst) + outlen), &outlen); \
 	}
 #define AESdecrypt_ctx(src, dst, key, dec_ctx)                                                      \
 	{                                                                                               \
@@ -285,7 +292,7 @@ static void inline ZERO(keyblock &block) {
 		EVP_CIPHER_CTX_set_padding(dec_ctx, 0);                                                     \
 		EVP_DecryptUpdate(dec_ctx, reinterpret_cast< unsigned char * >(dst), &outlen,               \
 						  reinterpret_cast< const unsigned char * >(src), AES_BLOCK_SIZE);          \
-		EVP_DecryptFinal_ex(dec_ctx, reinterpret_cast< unsigned char * >((dst) + outlen), &outlen); \
+		EVP_DecryptFinal_ex(dec_ctx, (reinterpret_cast< unsigned char * >(dst) + outlen), &outlen); \
 	}
 
 #define AESencrypt(src, dst, key) AESencrypt_ctx(src, dst, key, enc_ctx_ocb_enc)
@@ -325,13 +332,13 @@ bool CryptStateOCB2::ocb_encrypt(const unsigned char *plain, unsigned char *encr
 		}
 
 		S2(delta);
-		XOR(tmp, delta, reinterpret_cast< const subblock * >(plain));
+		XOR(tmp, delta, plain);
 		if (flipABit) {
 			*reinterpret_cast< unsigned char * >(tmp) ^= 1;
 		}
 		AESencrypt(tmp, tmp, raw_key);
-		XOR(reinterpret_cast< subblock * >(encrypted), delta, tmp);
-		XOR(checksum, checksum, reinterpret_cast< const subblock * >(plain));
+		XOR(encrypted, delta, tmp);
+		XOR(checksum, checksum, plain);
 		if (flipABit) {
 			*reinterpret_cast< unsigned char * >(checksum) ^= 1;
 		}
@@ -377,10 +384,10 @@ bool CryptStateOCB2::ocb_decrypt(const unsigned char *encrypted, unsigned char *
 
 	while (len > AES_BLOCK_SIZE) {
 		S2(delta);
-		XOR(tmp, delta, reinterpret_cast< const subblock * >(encrypted));
+		XOR(tmp, delta, encrypted);
 		AESdecrypt(tmp, tmp, raw_key);
-		XOR(reinterpret_cast< subblock * >(plain), delta, tmp);
-		XOR(checksum, checksum, reinterpret_cast< const subblock * >(plain));
+		XOR(plain, delta, tmp);
+		XOR(checksum, checksum, plain);
 		len -= AES_BLOCK_SIZE;
 		plain += AES_BLOCK_SIZE;
 		encrypted += AES_BLOCK_SIZE;
