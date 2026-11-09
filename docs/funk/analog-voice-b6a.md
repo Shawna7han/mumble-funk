@@ -131,3 +131,13 @@ Dateien werden im Build nach /out/doc zusammengetragen und unter denselben
 /usr/share/doc/mumble-funk-Pfaden ausgeliefert. Runtime-UID, Konfiguration und
 Aktivierung bleiben unverändert. Dies ist eine gezielte Reaktion auf den
 nachgewiesenen temporären Speicherbedarf, keine neue Docker-Betriebsarchitektur.
+
+Da vfs während des nächsten Builds erneut fast den lokalen Datenträger füllte,
+ersetzt ein BuildKit-Bind-Mount des gefilterten Buildkontexts außerdem das
+separate COPY der Quellen in die große Abhängigkeitsschicht. Submodule werden
+innerhalb dieses einen Build-/Testschritts temporär ergänzt; Änderungen am
+Bind-Kontext werden nicht in die Hostquellen oder das Runtimeimage übernommen.
+Nur /out mit Binary und Lizenzen wird weiterkopiert. BuildKit war bereits durch
+den bestehenden Secret-Mount vorausgesetzt. Abhängigkeiten, Build-/Testbefehle,
+Runtime-Pfade und Rootless-UID bleiben gleich. Die finale Abnahme verwendet den
+vorhandenen FUNK_BUILD_JOBS=1-Schalter, um konkurrierende Compilerlast zu begrenzen.

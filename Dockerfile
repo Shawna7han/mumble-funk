@@ -11,9 +11,9 @@ RUN set -eu; export DEBIAN_FRONTEND=noninteractive; \
       libavahi-compat-libdnssd-dev libzeroc-ice-dev; \
     rm -rf /var/lib/apt/lists/*
 ARG FUNK_BUILD_JOBS=2
-COPY . .
 # The optional CA and temporary combined bundle never enter the runtime image.
-RUN --mount=type=secret,id=proxy_ca,required=false \
+RUN --mount=type=bind,source=.,target=/src,rw \
+    --mount=type=secret,id=proxy_ca,required=false \
     set -eu; \
     case "$FUNK_BUILD_JOBS" in ''|*[!0-9]*) echo 'FUNK_BUILD_JOBS must be 1..16' >&2; exit 1;; esac; \
     test "$FUNK_BUILD_JOBS" -ge 1; test "$FUNK_BUILD_JOBS" -le 16; \
