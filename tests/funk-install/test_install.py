@@ -4,6 +4,7 @@ Run: python3 tests/funk-install/test_install.py /path/to/mumble-server
 Network permission is needed for the concurrent-server smoke test.
 """
 import hashlib
+import shutil
 from contextlib import closing
 from pathlib import Path
 import socket
@@ -24,18 +25,31 @@ class InstallationTests(unittest.TestCase):
             root = Path(directory)
             stage = root / "stage"
             binary = root / "server"
-            command = ["bash", str(REPO / "scripts/funk/install.sh"), "--experimental-analog-voice", "--stage", str(stage), str(binary)]
+            # An isolated checkout makes branch metadata deterministic also in
+            # detached PR/merge CI checkouts; copy the current script sources.
+            checkout = root / "checkout"
+            shutil.copytree(REPO / "scripts/funk", checkout / "scripts/funk")
+            shutil.copytree(REPO / "assets/audio", checkout / "assets/audio")
+            def git(*args):
+                return subprocess.check_output(["git", "-C", str(checkout), *args], text=True).strip()
+            git("init", "-b", "dev")
+            git("-c", "user.name=Shawna7han", "-c", "user.email=343870343+Shawna7han@users.noreply.github.com",
+                "commit", "--allow-empty", "-m", "Staged installation fixture")
+            revision = git("rev-parse", "HEAD")
+            command = ["bash", str(checkout / "scripts/funk/install.sh"), "--experimental-analog-voice", "--stage", str(stage), str(binary)]
             binary.write_text('#!/bin/sh\necho "Mumble server 1.5.939 dev fixture"\n')
             binary.chmod(0o755)
             subprocess.run(command, check=True, capture_output=True)
             prior = (stage / "opt/mumble-funk/current").resolve()
-            (prior / "BUILD-INFO").write_text("branch=dev\nexperimental=true\n")
+            self.assertIn("branch=dev\n", (prior / "BUILD-INFO").read_text())
+            git("switch", "-c", "feature/analog-voice-live")
             config = stage / "etc/mumble-funk/server.ini"
             config.write_text(config.read_text().replace("port=64739", "port=64745")+"\nanalogvoice=false\nanalogvoiceprofile=narrowband\n")
             db = stage / "var/lib/mumble-funk/server.sqlite"
             with sqlite3.connect(db) as connection:
                 connection.execute("CREATE TABLE operator_data (value TEXT)")
                 connection.execute("INSERT INTO operator_data VALUES ('channels/users/ACL fixture')")
+            connection.close()
             custom = stage / "etc/mumble-funk/sounds/operator.wav"
             custom.write_bytes(b"operator recording")
             protected = {p:p.read_bytes() for p in (config,db,custom)}
@@ -46,6 +60,7 @@ class InstallationTests(unittest.TestCase):
             info=(stage/"opt/mumble-funk/current/BUILD-INFO").read_text()
             self.assertIn("branch=feature/analog-voice-live",info)
             self.assertIn("experimental=true",info)
+            self.assertIn("revision="+revision,info)
             self.assertIn("port=64745",config.read_text())
 
     def test_supported_operating_systems(self):
