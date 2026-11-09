@@ -132,3 +132,8 @@ und Timeout-Close testen. Ein erfolgreiches Ende mit Marker darf keinen zweiten
 Timeout-Close auslösen. Für Status, WAV-Auswahl und Lautstärken die
 [gemeinsame Befehlsübersicht](ubuntu-commands.md) verwenden.
 Automatisierte Installer-Prüfungen ersetzen diese Geräte-Hörtests nicht.
+
+Für die gesonderte experimentelle Analog-Voice-Testinstallation und den Wechsel
+aus einem vorhandenen Dev-Checkout gilt die
+[Analog-Voice-Anleitung](install-analog-voice-test.md) mit ihrem eigenen Opt-in.
+Der normale Dev-Schalter erlaubt diesen Feature-Branch nicht.

@@ -1,8 +1,7 @@
 # B6A: technische Stabilisierung und experimenteller Installer
 
 Ausgangspunkt `7aeb835c9b4290af0cc060ab933ff5d01981efb2` auf
-`feature/analog-voice-live`, bestehender Draft-PR #15. Zwischenstand: vollständige
-Abnahme läuft noch. Keine Produktivfreigabe, kein Merge, keine Installation auf
+`feature/analog-voice-live`, bestehender Draft-PR #15. Technische Abnahme abgeschlossen. Keine Produktivfreigabe, kein Merge, keine Installation auf
 Proxmox/VPS und kein veröffentlichtes Docker-Image. B6B bleibt unbegonnen.
 
 ## Nachgewiesene Ursachen und Korrekturen
@@ -62,10 +61,23 @@ Der 120-ms-Profiltest hatte bereits Serverausgabe bei Empfangsfehlern. Der
 20-ms-Eingang und vollständigem Serverlog einschließlich vorhandener Dienstzähler
 und Shutdownstatus aus. Es wurden keine Prüfungen entfernt oder Timeouts erhöht.
 
-Wiederholungen und Schlussfolgerungen folgen nach Abschluss. Ein nicht
-reproduzierter Fehler gilt nicht als behoben. Als mögliche Einflussgröße bleibt
-das produktive Jobalter unter Compiler-/Tracinglast zu untersuchen; dies ist noch
-keine nachgewiesene Diagnose der B5-Zwischenläufe.
+Beide ursprünglichen Fälle liefen gemeinsam jeweils 20-mal normal unter
+paralleler Compilerlast, 20-mal unter strace -f und 20-mal auf eine CPU gebunden
+(erfolgreiche 60 Paare). Sie wurden nicht reproduziert und gelten ausdrücklich
+nicht als behoben. Das produktive Jobalter unter Last bleibt eine mögliche,
+aber nicht nachgewiesene Ursache der B5-Zwischenläufe.
+
+Parallel ausgeführte Gesamtabnahmen zeigten weitere reale Testabbrüche: einmal
+fehlte ein erwarteter Marker-Diagnoseeintrag im langen Noise-Test; mehrfach
+fehlten Teile optionaler Busy-/Asset-Ausgaben (z.B. 20 statt 61 bzw. 2 statt 13
+Pakete). Ein Audio-Defaults-Lauf meldete einen unvollständigen kontinuierlichen
+Stream. Eine kausale Eingrenzung auf Netzwerk, Effekttimer oder Host-Scheduling
+ist dadurch nicht bewiesen. Es wurden keine Sicherheitschecks entfernt, keine
+Zeitlimits erhöht und keine Audiokomponenten umgebaut. Der strikte Sanitizerlauf
+nach allen UB-Fixes endete zunächst 38/39 ohne Sanitizerbefund, aber mit einer
+AudioFeedback-Assertion; dessen gezielte Wiederholung ohne konkurrierenden Build
+bestand 1/1. Die abschließende native Gesamtsuite bestand 39/39; Audio-Defaults
+bestand erneut 3/3. Diese Unterschiede bleiben eine Test-/Lastunsicherheit für B6B.
 
 ## Installer
 
@@ -88,7 +100,38 @@ Echte externe Installation wurde nicht durchgeführt.
 
 ## Tatsächliche Abnahme
 
-Noch laufend; endgültige Ergebnisse werden vor dem Abschluss nachgetragen.
+- Non-Unity-Release-Vollbuild erfolgreich; finale native CTest-Suite **39/39**,
+  439,62 s. Vorherige belastete Läufe: zunächst 37/39, danach 38/39.
+- Isolierte B1–B3-Release-Suite **6/6**, relevante TSan-Tests **2/2** bestanden.
+- Native Installer-/Audiokonfigurationsprüfungen **43 Tests bestanden**:
+  install 6, assets 8, preview 5, squelch-admin 19, boost 1, radio-noise 1,
+  defaults 3. Source-Guards **31/31**, Setup **28/28**, Audio-Security **13/13**,
+  GHCR-Guards **3/3**, lokale Docker-Python-Tests **38/38** bestanden.
+- ASan/LSan/UBSan: Debug-Vollbuild instrumentiert; zunächst sechs ausgewählte
+  Targets mit Exit 0. Dies war kein Nachweis eines UB-freien Gesamtlaufs:
+  der anschließend strikte Modus mit halt_on_error deckte weitere Altfehler auf.
+  Nach den Korrekturen: vollständiger strikter Lauf 38/39 ohne Speicher-/UB-
+  Meldungen, fehlgeschlagene AudioFeedback-Assertion separat 1/1 bestanden.
+  Die zusätzlichen Null-/Ausrichtungs-/Sentinel-Regressionen bestanden.
+  Der letzte vollständige strikte Lauf bestand anschließend **39/39** in
+  490,67 s mit ASAN_OPTIONS=detect_leaks=1 und
+  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1, ohne gemeldete ASan-/LSan-/
+  UBSan-Befunde. Die vier bekannten B4/B5-Befunde und die zusätzlich gefundenen
+  Nullkopie-/Ping-/Indexprobleme sind damit für diese getesteten Projektpfade
+  nachweislich behoben; keine pauschale Aussage über uninstrumentierte Bibliotheken.
+- Finaler Dockerfile-Build unter Ubuntu erfolgreich: **39/39 CTest-Targets**,
+  496,43 s, und **38/38 Python-Tests**. Image
+  `sha256:ab20bb15a2b95f23d6b939fe9513b7e2be691bf5163af8fd2ebd4a6fb9f12787`.
+  Beide lokalen Container-Laufzeitläufe mit --audio-feedback --radio-noise
+  bestanden vollständig, einschließlich Prebuilt-Compose, Migration/Rollback,
+  TCP/verschlüsseltem UDP, 62-s-Noise-Timeout, Busy, Neustart/Recreate,
+  Rootless-Isolation, Backup/Restore, privaten WAVs und sauberem Shutdown.
+  Die Previous-Image-Fixture benutzt dasselbe Image und beweist Compose-
+  Migration/Rollback, keinen Versionsupgrade. Die native Probe verwendete exakt
+  die libopus.so.0 des fertigen Images, damit bytegenaue Opusvergleiche zwischen
+  Cloud und Ubuntu gültig sind. Testcontainer wurden aufgeräumt.
+- DSP-SHA256 unverändert, keine Audioassetänderungen; diff check sauber.
+
 Die bisherigen B5-Ergebnisse bleiben als historische Befunde dokumentiert.
 Externe Qt-/OpenSSL-/libopus-Bibliotheken sind lokal nicht selbst instrumentiert.
 
@@ -141,3 +184,15 @@ Nur /out mit Binary und Lizenzen wird weiterkopiert. BuildKit war bereits durch
 den bestehenden Secret-Mount vorausgesetzt. Abhängigkeiten, Build-/Testbefehle,
 Runtime-Pfade und Rootless-UID bleiben gleich. Die finale Abnahme verwendet den
 vorhandenen FUNK_BUILD_JOBS=1-Schalter, um konkurrierende Compilerlast zu begrenzen.
+
+
+Die Installermetadatenprüfung verwendet ein eigenes temporäres Dev-/Feature-
+Repository mit den aktuellen Skriptquellen. Damit sind BUILD-INFO-Prüfungen auch
+in losgelösten PR-Merge-Checkouts korrekt; die isolierte Stagingsuite bestand
+nach dieser Testkorrektur erneut 6/6. Reale Root-/systemd-Updates auf Proxmox/VPS
+wurden nicht ausgeführt. Der Betreiber führt sie später selbst aus.
+
+Die eigene CI des Abschlusscommits startet erst nach dem Push und wird im
+Abschlussbericht getrennt von lokalen Ergebnissen ausgewiesen. Keine globale
+Sanitizer-Unterdrückung, keine deaktivierten Tests und keine pauschalen
+Timeoutverlängerungen wurden verwendet.

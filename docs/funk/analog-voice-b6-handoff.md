@@ -1,5 +1,9 @@
 # Übergabe nach B5: B6 noch nicht begonnen
 
+Historische Übergabe nach B5. Die technische Phase [B6A](analog-voice-b6a.md)
+und der experimentelle Installer sind inzwischen umgesetzt; die reale
+[B6B-Hör-/Leistungsabnahme](analog-voice-b6b-handoff.md) bleibt unbegonnen.
+
 Ausschließlich `feature/analog-voice-live`, bestehender Draft-PR #15. Keine
 Betriebsfreigabe, kein Merge nach dev/stable und kein VPS-Deployment. B6 erst nach
 einem neuen Auftrag. [B5](analog-voice-b5.md) beschreibt Implementierung,

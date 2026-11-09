@@ -280,3 +280,11 @@ Dazu ist beim Setup Internetzugang nötig. Unveröffentlichte, leichte und Archi
 werden abgewiesen. Jetzt wird kein neuer Tag erstellt; `funk-v0.2.0` enthält noch
 den alten Installer und keine Docker-Dateien. Diese neue Auswahlfunktion wird
 nicht nachträglich in den alten Tag eingebaut.
+
+## Experimenteller Analog-Voice-Teststand
+
+Der veröffentlichte Branch `feature/analog-voice-live` benötigt ausdrücklich
+`--experimental-analog-voice`. Anleitung für den kontrollierten Wechsel einer
+bestehenden Dev-Testinstallation: [Analog-Voice-Testinstallation](install-analog-voice-test.md).
+Bestehende Daten und Einstellungen bleiben erhalten; der Installer aktiviert den
+Analogfilter nicht. Dies ist keine Stable- oder Betriebsfreigabe.
