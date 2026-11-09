@@ -353,12 +353,14 @@ bool CryptStateOCB2::ocb_encrypt(const unsigned char *plain, unsigned char *encr
 	tmp[BLOCKSIZE - 1] = SWAPPED(len * 8);
 	XOR(tmp, tmp, delta);
 	AESencrypt(tmp, pad, raw_key);
-	memcpy(tmp, plain, len);
+	if (len)
+		memcpy(tmp, plain, len);
 	memcpy(reinterpret_cast< unsigned char * >(tmp) + len, reinterpret_cast< const unsigned char * >(pad) + len,
 		   AES_BLOCK_SIZE - len);
 	XOR(checksum, checksum, tmp);
 	XOR(tmp, pad, tmp);
-	memcpy(encrypted, tmp, len);
+	if (len)
+		memcpy(encrypted, tmp, len);
 
 	S3(delta);
 	XOR(tmp, delta, checksum);
@@ -399,10 +401,12 @@ bool CryptStateOCB2::ocb_decrypt(const unsigned char *encrypted, unsigned char *
 	XOR(tmp, tmp, delta);
 	AESencrypt(tmp, pad, raw_key);
 	memset(tmp, 0, AES_BLOCK_SIZE);
-	memcpy(tmp, encrypted, len);
+	if (len)
+		memcpy(tmp, encrypted, len);
 	XOR(tmp, tmp, pad);
 	XOR(checksum, checksum, tmp);
-	memcpy(plain, tmp, len);
+	if (len)
+		memcpy(plain, tmp, len);
 
 	// Counter-cryptanalysis described in section 9 of https://eprint.iacr.org/2019/311
 	// In an attack, the decrypted last block would need to equal `delta ^ len(128)`.

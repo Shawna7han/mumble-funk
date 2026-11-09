@@ -50,12 +50,15 @@ public:
 	};
 
 	void append(const char *d, quint32 len) {
+		if (!len)
+			return;
 		if (left() >= len) {
 			memcpy(&data[offset], d, len);
 			offset += len;
 		} else {
 			unsigned int l = left();
-			memset(&data[offset], 0, l);
+			if (l)
+				memset(&data[offset], 0, l);
 			offset += l;
 			overshoot += len - l;
 			ok = false;

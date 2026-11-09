@@ -428,7 +428,7 @@ namespace Protocol {
 	template< Role role >
 	gsl::span< const byte >
 		UDPAudioEncoder< role >::getPreEncodedVolumeAdjustment(const VolumeAdjustment &adjustment) const {
-		int index = static_cast< int >(adjustment.dbAdjustment - preEncodedDBAdjustmentBegin);
+		const std::int64_t index = static_cast< std::int64_t >(adjustment.dbAdjustment) - preEncodedDBAdjustmentBegin;
 
 		if (adjustment.dbAdjustment == VolumeAdjustment::INVALID_DB_ADJUSTMENT || index < 0
 			|| static_cast< std::size_t >(index) >= m_preEncodedVolumeAdjustment.size()) {
@@ -487,17 +487,17 @@ namespace Protocol {
 			m_byteBuffer.resize(packetSize);
 
 			if (writeAdditionalInformation) {
-				std::uint32_t *dataArray = reinterpret_cast< std::uint32_t * >(m_byteBuffer.data());
+				auto *bytes = m_byteBuffer.data();
 				// Legacy pings expect the version to be encoded using the old (legacy) format
-				dataArray[0] = qToBigEndian(Version::toLegacyVersion(data.serverVersion));
+				qToBigEndian(Version::toLegacyVersion(data.serverVersion), bytes);
 				// dataArray[1] and dataArray[2] together hold the timestamp (written below)
-				dataArray[3] = qToBigEndian(data.userCount);
-				dataArray[4] = qToBigEndian(data.maxUserCount);
-				dataArray[5] = qToBigEndian(data.maxBandwidthPerUser);
+				qToBigEndian(data.userCount, bytes + 12);
+				qToBigEndian(data.maxUserCount, bytes + 16);
+				qToBigEndian(data.maxBandwidthPerUser, bytes + 20);
 			}
 
 			// Leave four empty bytes up front and then write the uint64 timestamp to the remaining 8 bytes
-			*reinterpret_cast< std::uint64_t * >(m_byteBuffer.data() + sizeof(std::uint32_t)) = data.timestamp;
+			std::memcpy(m_byteBuffer.data() + sizeof(std::uint32_t), &data.timestamp, sizeof(data.timestamp));
 
 			actualSize = packetSize;
 		} else {
@@ -673,17 +673,17 @@ namespace Protocol {
 				static_assert(6 * sizeof(std::uint32_t) == 24, "Unexpected size of uint32_t");
 				if (data.size() == 6 * sizeof(std::uint32_t)) {
 					// Extended ping containing meta-information
-					const std::uint32_t *dataArray = reinterpret_cast< const std::uint32_t * >(data.data());
+					const auto *bytes = data.data();
 
 					// Legacy pings only support the version to be encoded using the old (legacy) format
-					m_pingData.serverVersion = Version::fromLegacyVersion(qFromBigEndian(dataArray[0]));
+					m_pingData.serverVersion = Version::fromLegacyVersion(qFromBigEndian< std::uint32_t >(bytes));
 
 					// Virtual array entries 1 and 2 are actually a single uint64. Note that the timestamp is
 					// whatever the client sent to the server and thus it does not require an endian-transformation
-					m_pingData.timestamp           = *reinterpret_cast< const std::uint64_t * >(&dataArray[1]);
-					m_pingData.userCount           = qFromBigEndian(dataArray[3]);
-					m_pingData.maxUserCount        = qFromBigEndian(dataArray[4]);
-					m_pingData.maxBandwidthPerUser = qFromBigEndian(dataArray[5]);
+					std::memcpy(&m_pingData.timestamp, bytes + 4, sizeof(m_pingData.timestamp));
+					m_pingData.userCount           = qFromBigEndian< std::uint32_t >(bytes + 12);
+					m_pingData.maxUserCount        = qFromBigEndian< std::uint32_t >(bytes + 16);
+					m_pingData.maxBandwidthPerUser = qFromBigEndian< std::uint32_t >(bytes + 20);
 
 					return true;
 				} else {
@@ -702,7 +702,7 @@ namespace Protocol {
 					// decoding to do right now, is reading out the timestamp. Note that the byte-order of this field
 					// (and its contents in general) is unspecified and thus the server code should never try to make
 					// sense of it.
-					m_pingData.timestamp = *reinterpret_cast< const std::uint64_t * >(data.data() + 4);
+					std::memcpy(&m_pingData.timestamp, data.data() + 4, sizeof(m_pingData.timestamp));
 					m_pingData.requestAdditionalInformation = true;
 
 					return true;

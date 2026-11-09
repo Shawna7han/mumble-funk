@@ -99,3 +99,35 @@ Queuegrenzen, Netzwerkports oder 300-ms-Close-Frist wurden verändert. Der
 Unix-SIGTERM-Notifier bleibt erhalten. Serverübergabe beweist keine tatsächliche
 Client-Wiedergabe. Reale Hör-/Last-/2-GB-VPS-Abnahme, TLS-Sättigung,
 Sessionreuse und die moderne Decodergrenze bei leerem Raw-Opus bleiben B6B-Themen.
+
+### Weitere durch striktes UBSan nachgewiesene Altfehler
+
+`halt_on_error=1` machte zwei Null-Längen-Kopien sichtbar: OCB2 erhielt bei leerem
+Klartext nullptr und übergab ihn an memcpy mit Länge 0; PacketDataStream::append
+machte dasselbe bei leerem Audio. Die Kopien werden für Länge 0 jetzt ausgelassen.
+Auch das Auffüllen eines Streams mit Kapazität 0 vermeidet memset(nullptr,0,0);
+sein vorhandener Overshoot-/Fehlerzustand bleibt erhalten. Ein Nullkapazitäts-
+Regressionstest prüft leeres Append sowie korrekt abgewiesenes nichtleeres Append.
+
+Der nächste strikte Lauf wies unaligned uint64-Zugriffe in Legacy-Pings nach
+(MumbleProtocol.cpp, Timestamp an Offset 4). Die Kodierung und beide
+Dekodierpfade verwenden nun memcpy für den opaken Timestamp und byteorientierte
+qTo/FromBigEndian-Aufrufe für die übrigen Felder. Die bisherige Timestamp-
+Bytereihenfolge wird ausdrücklich nicht konvertiert. Die bestehenden Pingtests
+prüfen jetzt zusätzlich Puffer mit um ein Byte versetztem Beginn. Diese kleinen
+Erweiterungen außerhalb der anfänglich vier Stellen sind durch konkrete UBSan-
+Stacks begründet; keine Änderung des Paketformats oder der Audioarchitektur.
+
+Ein weiterer strikter UBSan-Stack zeigte den Überlauf im Metadatenindex für
+`INVALID_DB_ADJUSTMENT` (INT_MAX): Der alte Code subtrahierte einen negativen
+Bereichsanfang bereits vor seiner Sentinel-Prüfung. Der Index wird nun in int64
+berechnet. Gültige vorcodierte dB-Werte und der bisherige Fallback bleiben
+identisch; es entsteht keine neue Lautstärkefunktion.
+
+Der erste lokale Dockerlauf bestand die Teststufe, scheiterte aber beim
+Runtime-COPY der Lizenzdatei an `no space left on device` unter vfs. Die drei
+Lizenz-COPYs werden deshalb zu einer Kopierschicht zusammengefasst: dieselben
+Dateien werden im Build nach /out/doc zusammengetragen und unter denselben
+/usr/share/doc/mumble-funk-Pfaden ausgeliefert. Runtime-UID, Konfiguration und
+Aktivierung bleiben unverändert. Dies ist eine gezielte Reaktion auf den
+nachgewiesenen temporären Speicherbedarf, keine neue Docker-Betriebsarchitektur.

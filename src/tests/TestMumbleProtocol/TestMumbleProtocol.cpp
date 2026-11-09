@@ -99,6 +99,11 @@ template< Mumble::Protocol::Role encoderRole, Mumble::Protocol::Role decoderRole
 		// Regular connectivity ping
 		auto encodedData = encoder.encodePingPacket(data);
 		QVERIFY(decoder.decode(encodedData));
+		{
+			std::vector< Mumble::Protocol::byte > shifted(encodedData.size() + 1);
+			std::copy(encodedData.begin(), encodedData.end(), shifted.begin() + 1);
+			QVERIFY(decoder.decode({ shifted.data() + 1, encodedData.size() }));
+		}
 
 		QCOMPARE(decoder.getMessageType(), Mumble::Protocol::UDPMessageType::Ping);
 		QCOMPARE(decoder.getPingData(), data);
@@ -120,6 +125,11 @@ template< Mumble::Protocol::Role encoderRole, Mumble::Protocol::Role decoderRole
 
 			encodedData = encoder.encodePingPacket(data);
 			QVERIFY(decoder.decode(encodedData));
+			{
+				std::vector< Mumble::Protocol::byte > shifted(encodedData.size() + 1);
+				std::copy(encodedData.begin(), encodedData.end(), shifted.begin() + 1);
+				QVERIFY(decoder.decode({ shifted.data() + 1, encodedData.size() }));
+			}
 
 			QCOMPARE(decoder.getMessageType(), Mumble::Protocol::UDPMessageType::Ping);
 			QCOMPARE(decoder.getPingData(), data);
@@ -133,6 +143,11 @@ template< Mumble::Protocol::Role encoderRole, Mumble::Protocol::Role decoderRole
 
 			encodedData = encoder.encodePingPacket(data);
 			QVERIFY(decoder.decode(encodedData));
+			{
+				std::vector< Mumble::Protocol::byte > shifted(encodedData.size() + 1);
+				std::copy(encodedData.begin(), encodedData.end(), shifted.begin() + 1);
+				QVERIFY(decoder.decode({ shifted.data() + 1, encodedData.size() }));
+			}
 
 			QCOMPARE(decoder.getMessageType(), Mumble::Protocol::UDPMessageType::Ping);
 		}
