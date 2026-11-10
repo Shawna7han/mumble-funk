@@ -62,6 +62,9 @@ Es ist ein Update desselben Dienstes, keine zusätzliche Instanz. Die vorhandene
 INI `/etc/mumble-funk/server.ini`, SQLite-Zustände unter `/var/lib/mumble-funk`,
 Benutzer/Kanäle/ACLs, Passwörter, Zertifikate, Port, eigene WAVs und Audioeinstellungen
 werden nicht neu initialisiert. Bestehende Konfigurationen werden nicht migriert.
+Das gilt ausdrücklich auch für fehlende Schlüssel und bewusst deaktivierte
+Funktionen. Die neuen CB-Vorlagen werden bei einem Update nicht angewendet;
+es gibt keinen `--apply-cb-preset`-Schalter.
 
 Vor dem Umschalten hält der Installer ausschließlich den eigenen Dienst an und
 sichert Konfiguration und den vollständigen Zustandsordner unter
@@ -75,10 +78,17 @@ Programmversionen liegen unter `/opt/mumble-funk/releases/<Binary-SHA256>/`.
 Binary-Version. `BUILD-INFO` nennt Revision, Branch und `experimental=true`.
 Build-/Testfehler führen nicht zum Austausch der laufenden Installation.
 
-## Version prüfen und Filter bewusst aktivieren
+## Neuinstallation und bestehende Testinstallation unterscheiden
 
-Die Installation schaltet Analog Voice nicht selbst ein. Ein fehlender Schlüssel
-oder `analogvoice=false` behält den Direktpfad. Zuerst prüfen:
+Nur bei einer vollständig neuen Installation aktiviert die Vorlage Analog Voice
+mit `cb-am`: Simplex, AudioFeedback, Busy, Open/Close, Timeout-Close und Noise sind
+aktiv; Busy 100 %, Open/Close 80 %, Rauschen 20 %, Effekt-Boost +8 dB. Die
+vorhandenen WAVs bleiben unverändert. [Vollständige CB-Vorgaben](audio-defaults.md).
+
+Bei einer bestehenden Testinstallation schaltet das Update Analog Voice nicht
+selbst ein. Ein fehlender Schlüssel oder `analogvoice=false` behält den Direktpfad.
+`business-fm` und `narrowband` bleiben verfügbar und werden bei Updates ebenso
+erhalten wie `cb-am`. Zuerst prüfen:
 
 ```bash
 sudo systemctl --no-pager --full status mumble-funk

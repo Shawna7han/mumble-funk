@@ -2,6 +2,7 @@
 // Use of this source code is governed by the BSD-style license in LICENSE.
 #include "../../../src/tests/TestSimplexIntegration/Harness.h"
 #include "AudioSignal.h"
+#include "AnalogVoiceStream.h"
 #include <iostream>
 #include <cstdlib>
 #include <algorithm>
@@ -110,11 +111,13 @@ static void installedAudio(Client &a, Client &b, Client &observer, bool muted) {
 }
 // Exercise the published container, its persistent imported WAV and the SAME
 // server engine as native builds. These are protocol/decoder tests, not hearing tests.
-static void radioNoise(Client &a, Client &b, Client &receiver) {
+static void radioNoise(Client &a, Client &b, Client &receiver, bool cbDefaults = false) {
  auto check=[](bool ok,const char *message){if(!ok){std::cerr<<message<<std::endl;std::exit(1);}};
  const auto voice=AudioSignal::encode(AudioSignal::syntheticBusy(),100).front();
- const auto close=AudioSignal::encodeWavSignal(QStringLiteral(AUDIO_ASSET_DIR)+"/squelch-close.wav",50,8);
- const auto busy=AudioSignal::encode(AudioSignal::loadWav(QStringLiteral(AUDIO_ASSET_DIR)+"/busy-tone.wav"),50,8);
+ const auto close=AudioSignal::encodeWavSignal(QStringLiteral(AUDIO_ASSET_DIR)+"/squelch-close.wav",cbDefaults?80:50,8);
+ const auto busy=AudioSignal::encode(AudioSignal::loadWav(QStringLiteral(AUDIO_ASSET_DIR)+"/busy-tone.wav"),cbDefaults?100:50,8);
+ std::unique_ptr<funkvoice::AnalogVoiceStream> analog;
+ if(cbDefaults)analog=std::make_unique<funkvoice::AnalogVoiceStream>(funkvoice::profile("cb-am"));
  auto decode=[&](const QList<Received> &packets){
   int error=0;std::vector<float> result;
   std::unique_ptr<OpusDecoder,decltype(&opus_decoder_destroy)> decoder(opus_decoder_create(48000,1,&error),opus_decoder_destroy);
@@ -124,11 +127,26 @@ static void radioNoise(Client &a, Client &b, Client &receiver) {
    for(float value:pcm){check(std::isfinite(value)&&std::abs(value)<1,"Radio sample invalid");result.push_back(value);}
   }return result;
  };
+ auto compareAudio=[&](const QList<Received> &actual,const QList<Received> &reference,const char *label){
+  const auto actualPcm=decode(actual),referencePcm=decode(reference);
+  double dot=0,actualEnergy=0,referenceEnergy=0;
+  check(actualPcm.size()==referencePcm.size(),"CB decoded duration differs");
+  for(std::size_t i=0;i<actualPcm.size();++i){const double x=actualPcm[i],y=referencePcm[i];
+   dot+=x*y;actualEnergy+=x*x;referenceEnergy+=y*y;}
+  const double correlation=dot/std::sqrt(actualEnergy*referenceEnergy);
+  const double level=std::sqrt(actualEnergy/referenceEnergy);
+  std::cout<<label<<": correlation="<<correlation<<" relative level="<<level<<std::endl;
+  const bool matches=actualEnergy>0&&referenceEnergy>0&&correlation>.98&&level>.9&&level<1.1;
+  if(!matches)std::cerr<<label<<": correlation="<<correlation<<" relative level="<<level<<std::endl;
+  check(matches,label);
+ };
  QList<Received> reference;for(const auto &packet:close)reference.append({0,0,false,packet});
  const auto expected=decode(reference);
  std::uint64_t frame=0,previousEnd=0;
  for(int test=0;test<4;++test){
-  const bool udp=test%2,timeout=test>=2;const int duration=test==3?62000:2000;
+  // Retain the historical >60-second Noise regression. Fresh CB settings need
+  // short confirmed/timeout transport checks, not a new transcoding load test.
+  const bool udp=test%2,timeout=test>=2;const int duration=!cbDefaults&&test==3?62000:2000;
   if(udp){
    if(a.udp.state()==QAbstractSocket::UnconnectedState)check(a.udp.bind(QHostAddress(QHostAddress::LocalHost),0),"Radio UDP bind failed");
    if(receiver.udp.state()==QAbstractSocket::UnconnectedState)check(receiver.udp.bind(QHostAddress(QHostAddress::LocalHost),0),"Receiver UDP bind failed");
@@ -167,14 +185,42 @@ static void radioNoise(Client &a, Client &b, Client &receiver) {
   if(!timeout){check(speak(true),"Confirmed container terminator failed");++count;}
   check(udp?a.udpBarrier():a.barrier(),"Container voice fence failed");
   all+=read(900);bob+=b.audio(0);
-  QList<Received> effects;int heard=0;
+  QList<Received> effects,speech;int heard=0;
   for(const auto &p:all){
    if(p.session==receiver.session)effects.append(p);
-   else {check(p.session==a.session&&p.payload==voice,"Speech changed or Busy leaked to wrong receiver");
-    check(p.frame==startFrame+std::uint64_t(heard)*2,"Speech sequence missing");++heard;
-    check(p.last==(!timeout&&heard==count),"Speech end flag changed");}
+   else {check(p.session==a.session,"Busy leaked to wrong receiver");speech.append(p);
+    if(!cbDefaults){check(p.payload==voice,"Speech changed");
+     check(p.frame==startFrame+std::uint64_t(heard)*2,"Speech sequence missing");
+     check(p.last==(!timeout&&heard+1==count),"Speech end flag changed");}++heard;}
   }
-  check(heard==count,"Original speech missing");
+  if(cbDefaults){
+   // Compare actual socket deliveries with the unchanged B2 codec/DSP contract,
+   // including its lookahead, padding and technical timeout end.
+   check(analog->begin(startFrame),"CB reference stream failed to begin");
+   QList<Received> expectedSpeech;
+   auto append=[&](const funkvoice::AnalogVoiceStream::Result &result){
+    check(result.error==funkvoice::AnalogVoiceStream::Error::None,"CB reference codec failed");
+    for(std::size_t i=0;i<result.count;++i){const auto &p=result.packets[i];
+     expectedSpeech.append({a.session,p.frame,p.end!=funkvoice::AnalogVoiceStream::End::None,
+      QByteArray(reinterpret_cast<const char*>(p.payload.data()),int(p.bytes))});}
+   };
+   for(int i=0;i<count;++i){funkvoice::AnalogVoiceStream::Result result;
+    analog->process({reinterpret_cast<const unsigned char*>(voice.constData()),std::size_t(voice.size()),
+     startFrame+std::uint64_t(i)*2,!timeout&&i+1==count},result);append(result);}
+   if(timeout){funkvoice::AnalogVoiceStream::Result result;analog->finish(result);append(result);}
+   if(speech.size()!=expectedSpeech.size())std::cerr<<"CB speech="<<speech.size()<<", expected="<<expectedSpeech.size()<<std::endl;
+   check(!speech.isEmpty()&&speech.size()==expectedSpeech.size(),"CB speech or encoder tail missing");
+   for(int i=0;i<speech.size();++i){const auto &p=speech[i],&expectedPacket=expectedSpeech[i];
+    if(p.frame!=expectedPacket.frame||p.last!=expectedPacket.last)
+     std::cerr<<"CB case="<<test<<" packet="<<i<<" actual frame="<<p.frame<<" last="<<p.last<<" bytes="<<p.payload.size()
+              <<" expected frame="<<expectedPacket.frame<<" last="<<expectedPacket.last<<" bytes="<<expectedPacket.payload.size()
+              <<" same payload="<<(p.payload==expectedPacket.payload)<<std::endl;
+    check(p.frame==expectedPacket.frame&&p.last==expectedPacket.last,"CB clock or end differs from B2 contract");}
+   check(speech.first().payload!=voice,"CB default fell back to raw Opus");
+   // Container and host can use different compiler/SIMD/libopus builds. Decode
+   // before comparing DSP output; bit-identical cross-build Opus is not a contract.
+   compareAudio(speech,expectedSpeech,"CB speech against B2 profile");
+  } else check(heard==count,"Original speech missing");
   check(effects.size()>duration/25&&effects.size()>int(close.size()+1),"Continuous radio stream incomplete");
   check(!effects.first().last&&effects.last().last,"Radio final marker missing");
   if(test)check(effects.first().frame>previousEnd,"Radio stream reused old sequence");
@@ -185,14 +231,26 @@ static void radioNoise(Client &a, Client &b, Client &receiver) {
   const auto offset=actual.size()-expected.size();double dot=0,x2=0,y2=0;
   for(std::size_t i=960;i<expected.size();++i){double x=actual[offset+i],y=expected[i];dot+=x*y;x2+=x*x;y2+=y*y;}
   check(x2>0&&y2>0&&dot/std::sqrt(x2*y2)>.85,"Complete decoded Close missing after container Noise");
-  if(test==0){int first=-1;for(int i=0;i<bob.size();++i)if(bob[i].session==b.session&&bob[i].payload==busy.front()){first=i;break;}
+  if(test==0&&cbDefaults){
+   QList<Received> privatePackets;for(const auto &p:bob)if(p.session==b.session)privatePackets.append(p);
+   int first=0;while(first<privatePackets.size()&&!privatePackets[first].last)++first;++first;
+   check(first>0&&privatePackets.size()>=first+int(busy.size()),"CB Busy did not follow terminated private Noise");
+   check(privatePackets[first].frame>privatePackets[first-1].frame,"CB Busy reused private Noise sequence");
+   QList<Received> referenceBusy;
+   for(std::size_t i=0;i<busy.size();++i){const auto &p=privatePackets[first+int(i)];
+    check(p.last==(i+1==busy.size()),"CB Busy terminator changed");
+    if(i)check(p.frame==privatePackets[first+int(i)-1].frame+2,"CB Busy sequence changed");
+    referenceBusy.append({b.session,0,false,busy[i]});}
+   compareAudio(privatePackets.mid(first,int(busy.size())),referenceBusy,"CB Busy100 boost8");
+  } else if(test==0){int first=-1;for(int i=0;i<bob.size();++i)if(bob[i].session==b.session&&bob[i].payload==busy.front()){first=i;break;}
    check(first>0&&bob[first-1].last,"Busy did not safely interrupt private effect");
    check(bob.size()>=first+int(busy.size()),"Busy incomplete");
    for(std::size_t i=0;i<busy.size();++i)check(bob[first+int(i)].payload==busy[i]&&bob[first+int(i)].last==(i+1==busy.size()),"Busy priority or bytes changed");}
   check(a.audio(0).isEmpty(),"Private radio effects sent to original sender");
   std::cout<<"PASS: container radio "<<duration<<"ms "<<(udp?"encrypted UDP":"TCP")<<(timeout?" timeout":" confirmed")<<"; speech="<<heard<<" effects="<<effects.size()<<"; one final marker, decoded Close"<<std::endl;
  }
- std::cout<<"Container Open/Noise/Close verified; TCP + encrypted UDP, Busy and unchanged speech"<<std::endl;
+ std::cout<<(cbDefaults?"CB defaults verified; cb-am, Busy100, Open/Close80, Noise20, boost8; ":"Container Open/Noise/Close verified; ")
+          <<"TCP + encrypted UDP, Busy and "<<(cbDefaults?"filtered speech":"unchanged speech")<<std::endl;
 }
 
 int main(int argc,char **argv) {
@@ -209,6 +267,7 @@ int main(int argc,char **argv) {
  check(login(a,port,"DockerAlice",password),"TCP/TLS login A failed");
  check(login(b,port,"DockerBob",password),"TCP/TLS login B failed");
  check(login(observer,port,"DockerObserver",password),"TCP/TLS observer login failed");
+ if(argc>2 && QString::fromLocal8Bit(argv[2])=="--cb-defaults") {radioNoise(a,b,observer,true);return 0;}
  if(argc>2 && QString::fromLocal8Bit(argv[2])=="--radio-noise") {radioNoise(a,b,observer);return 0;}
  if(argc>2 && (QString::fromLocal8Bit(argv[2])=="--audio-defaults" || QString::fromLocal8Bit(argv[2])=="--audio-defaults-muted")) {
   installedAudio(a,b,observer,QString::fromLocal8Bit(argv[2])=="--audio-defaults-muted");return 0;

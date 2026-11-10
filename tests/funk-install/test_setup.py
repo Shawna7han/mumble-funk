@@ -413,7 +413,8 @@ class OrchestrationTests(unittest.TestCase):
         self.assertIn('experimental=true\n', info)
         config = root / 'etc/mumble-funk/server.ini'
         self.assertIn('radionoise=true\n', config.read_text())
-        self.assertNotIn('analogvoice=true', config.read_text())
+        self.assertIn('analogvoice=true\n', config.read_text())
+        self.assertIn('analogvoiceprofile=cb-am\n', config.read_text())
         self.assertEqual((root/'usr/local/share/mumble-funk/audio/radio-noise.wav').read_bytes(),
                          (REPO/'assets/audio/radio-noise.wav').read_bytes())
         config.write_text(config.read_text().replace('audiofeedback=true', 'audiofeedback=false')

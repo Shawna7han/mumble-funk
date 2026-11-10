@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import select
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -16,10 +17,11 @@ BINARY = Path(sys.argv.pop(1)).resolve()
 PROBE = Path(sys.argv.pop(1)).resolve()
 REPO = Path(__file__).resolve().parents[2]
 EXPECTED = {
-    'simplex': 'true', 'audiofeedback': 'true', 'busytone': 'true',
+    'simplex': 'true', 'analogvoice': 'true', 'analogvoiceprofile': 'cb-am',
+    'audiofeedback': 'true', 'busytone': 'true',
     'busytonefile': '/usr/local/share/mumble-funk/audio/busy-tone.wav',
-    'busytonevolume': '50', 'squelch': 'true', 'squelchopen': 'true',
-    'squelchclose': 'true', 'squelchopenvolume': '50', 'squelchclosevolume': '50',
+    'busytonevolume': '100', 'squelch': 'true', 'squelchopen': 'true',
+    'squelchclose': 'true', 'squelchopenvolume': '80', 'squelchclosevolume': '80',
     'feedbackboostdb': '8', 'squelchclosetimeoutfallback': 'true',
     'radionoise': 'true', 'radionoisefile': '/usr/local/share/mumble-funk/audio/radio-noise.wav',
     'radionoisevolume': '20',
@@ -73,13 +75,24 @@ class AudioDefaults(unittest.TestCase):
         root, config, args = self.native('existing')
         own = root/'etc/mumble-funk/sounds/own.wav'
         own.write_bytes((REPO/'assets/audio/busy-tone.wav').read_bytes())
+        database = root/'var/lib/mumble-funk/server.sqlite'
+        with sqlite3.connect(database) as db:
+            db.execute('CREATE TABLE preserved (value TEXT)')
+            db.execute("INSERT INTO preserved VALUES ('users/channels/ACL fixture')")
+        db.close()
+        certificate = database.with_name('operator.pem')
+        certificate.write_bytes(b'Operator certificate fixture\n')
+        protected = {path: path.read_bytes() for path in (own, database, certificate)}
         base = 'port=64739\ndatabase=/var/lib/mumble-funk/server.sqlite\nserverpassword=private-fixture\n'
         variants = [
             '',  # All radio/audio keys absent: core defaults must stay off/boost0.
-            'simplex=false\naudiofeedback=false\nsquelch=false\nfeedbackboostdb=0\nbusytonefile=\nsquelchclosetimeoutfallback=false\n',
+            'simplex=false\nanalogvoice=false\naudiofeedback=false\nsquelch=false\nfeedbackboostdb=0\nbusytonefile=\nsquelchclosetimeoutfallback=false\n',
             'simplex=true\naudiofeedback=false\nsquelch=false\nbusytone=false\nfeedbackboostdb=12\n'
             'busytonefile=/etc/mumble-funk/sounds/own.wav\nbusytonevolume=0\n'
+            'analogvoice=true\nanalogvoiceprofile=business-fm\n'
             'squelchopen=false\nsquelchclose=false\nsquelchclosetimeoutfallback=true\n',
+            'analogvoice=false\nanalogvoiceprofile=narrowband\n'
+            'busytonevolume=50\nsquelchopenvolume=50\nsquelchclosevolume=50\n',
         ]
         for variant in variants:
             with self.subTest(variant=variant):
@@ -87,7 +100,8 @@ class AudioDefaults(unittest.TestCase):
                 config.write_bytes(before)
                 subprocess.run(args, check=True, capture_output=True)
                 self.assertEqual(config.read_bytes(), before)
-                self.assertEqual(own.read_bytes(), (REPO/'assets/audio/busy-tone.wav').read_bytes())
+                for path, content in protected.items():
+                    self.assertEqual(path.read_bytes(), content, str(path))
         # Admin status uses legacy defaults when fields are missing; no migration.
         config.write_text(base)
         before = config.read_bytes()
@@ -106,8 +120,8 @@ class AudioDefaults(unittest.TestCase):
     def test_actual_fresh_audio_and_volume_zero_native_and_docker(self):
         configs = [self.native('live')[1], self.docker()]
         for original in configs:
-            for muted in (None, False, True):
-                with self.subTest(source=original, muted=muted):
+            for scenario in ('cb', 'legacy-noise', 'legacy-audio', 'muted'):
+                with self.subTest(source=original, scenario=scenario):
                     with socket.socket() as reserve:
                         reserve.bind(('127.0.0.1', 0))
                         port = reserve.getsockname()[1]
@@ -119,9 +133,14 @@ class AudioDefaults(unittest.TestCase):
                     text = text.replace('/usr/local/share/mumble-funk/audio', str(REPO/'assets/audio'))
                     # Exercise the untouched new config first, then retain the
                     # existing independent Busy/Squelch byte/mute regressions.
-                    if muted is not None:
+                    if scenario != 'cb':
+                        text = text.replace('analogvoice=true', 'analogvoice=false')
+                        text = text.replace('busytonevolume=100', 'busytonevolume=50')
+                        text = text.replace('squelchopenvolume=80', 'squelchopenvolume=50')
+                        text = text.replace('squelchclosevolume=80', 'squelchclosevolume=50')
+                    if scenario in ('legacy-audio', 'muted'):
                         text = text.replace('radionoise=true', 'radionoise=false')
-                    if muted:
+                    if scenario == 'muted':
                         for key in ('busytonevolume', 'squelchopenvolume', 'squelchclosevolume'):
                             text = text.replace(key+'=50', key+'=0')
                     (self.root/'state').mkdir(exist_ok=True)
@@ -140,14 +159,21 @@ class AudioDefaults(unittest.TestCase):
                         self.assertIn(b'Server listening on', startup)
                         self.assertIn(b'Experimental audio feedback enabled:', startup)
                         self.assertIn(b'Experimental Squelch', startup)
+                        if scenario == 'cb':
+                            self.assertIn(b'Experimental analog voice enabled: cb-am;', startup)
+                        else:
+                            self.assertNotIn(b'Experimental analog voice enabled:', startup)
                         password = values(text)['serverpassword']
-                        mode = '--radio-noise' if muted is None else '--audio-defaults-muted' if muted else '--audio-defaults'
+                        mode = {'cb': '--cb-defaults', 'legacy-noise': '--radio-noise',
+                                'legacy-audio': '--audio-defaults', 'muted': '--audio-defaults-muted'}[scenario]
                         result = subprocess.run([str(PROBE), str(port), mode], input=password+'\n',
                                                 # The radio probe includes a 62-second transmission;
                                                 # retain the 20-second bound for legacy probes.
-                                                capture_output=True, text=True, timeout=100 if muted is None else 20)
-                        self.assertEqual(result.returncode, 0, result.stderr)
-                        self.assertIn('Container Open/Noise/Close verified' if muted is None else
+                                                capture_output=True, text=True,
+                                                timeout=100 if scenario in ('cb', 'legacy-noise') else 20)
+                        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+                        self.assertIn('CB defaults verified' if scenario == 'cb' else
+                                      'Container Open/Noise/Close verified' if scenario == 'legacy-noise' else
                                       'Installed audio defaults verified', result.stdout)
                     finally:
                         server.terminate()

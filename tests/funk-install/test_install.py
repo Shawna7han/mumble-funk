@@ -44,7 +44,9 @@ class InstallationTests(unittest.TestCase):
             self.assertIn("branch=dev\n", (prior / "BUILD-INFO").read_text())
             git("switch", "-c", "feature/analog-voice-live")
             config = stage / "etc/mumble-funk/server.ini"
-            config.write_text(config.read_text().replace("port=64739", "port=64745")+"\nanalogvoice=false\nanalogvoiceprofile=narrowband\n")
+            config.write_text(config.read_text().replace("port=64739", "port=64745")
+                              .replace("analogvoice=true", "analogvoice=false")
+                              .replace("analogvoiceprofile=cb-am", "analogvoiceprofile=narrowband"))
             db = stage / "var/lib/mumble-funk/server.sqlite"
             with sqlite3.connect(db) as connection:
                 connection.execute("CREATE TABLE operator_data (value TEXT)")
@@ -52,7 +54,9 @@ class InstallationTests(unittest.TestCase):
             connection.close()
             custom = stage / "etc/mumble-funk/sounds/operator.wav"
             custom.write_bytes(b"operator recording")
-            protected = {p:p.read_bytes() for p in (config,db,custom)}
+            certificate = db.with_name('operator.pem')
+            certificate.write_bytes(b'Existing operator certificate fixture\n')
+            protected = {p:p.read_bytes() for p in (config,db,custom,certificate)}
             binary.write_text('#!/bin/sh\necho "Mumble server 1.5.939 analog fixture"\n')
             subprocess.run(command, check=True, capture_output=True)
             self.assertEqual((stage/"opt/mumble-funk/previous").resolve(),prior)

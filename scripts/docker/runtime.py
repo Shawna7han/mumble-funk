@@ -103,6 +103,8 @@ radionoise=true
 radionoisefile=/usr/local/share/mumble-funk/audio/radio-noise.wav
 radionoisevolume=20
 simplex=true
+analogvoice=true
+analogvoiceprofile=cb-am
 simplextimeout=500
 simplexretrytimeout=500
 simplexdiagnostics=true
@@ -113,7 +115,7 @@ voicediagnosticsfile=/var/log/mumble-funk/voice
 audiofeedback=true
 busytone=true
 busytonefile=/usr/local/share/mumble-funk/audio/busy-tone.wav
-busytonevolume=50
+busytonevolume=100
 feedbackboostdb=8
 squelch=true
 squelchopen=true
@@ -121,8 +123,8 @@ squelchclose=true
 squelchclosetimeoutfallback=true
 squelchopenfile=/usr/local/share/mumble-funk/audio/squelch-open.wav
 squelchclosefile=/usr/local/share/mumble-funk/audio/squelch-close.wav
-squelchopenvolume=50
-squelchclosevolume=50
+squelchopenvolume=80
+squelchclosevolume=80
 '''
         write_private(CONFIG, text.encode())
     settings()

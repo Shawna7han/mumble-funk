@@ -220,7 +220,8 @@ def main():
             for key in ('audiofeedback','squelch','squelchopen','squelchclose','busytone'):
                 assert values[key]=='true', 'Fresh installation must enable '+key
             assert values['feedbackboostdb']=='8' and values['squelchclosetimeoutfallback']=='true'
-            for key in ('busytonevolume','squelchopenvolume','squelchclosevolume'): assert values[key]=='50'
+            assert (values['analogvoice'],values['analogvoiceprofile'])==('true','cb-am')
+            assert (values['busytonevolume'],values['squelchopenvolume'],values['squelchclosevolume'])==('100','80','80')
             # COPY must normalize public permissions even from a 0077 checkout.
             # Git records executable bits, not group/other read permissions.
             readable="import os,stat;from pathlib import Path;paths=[Path('/usr/local/share/mumble-funk/audio')/name for name in ('busy-tone.wav','squelch-open.wav','squelch-close.wav','radio-noise.wav','LICENSE.md')]+[Path('/usr/local/lib/mumble-funk')/name for name in ('audio.py','audio_control.py')];assert os.getuid()==10001;assert all(os.access(p,os.R_OK) and stat.S_IMODE(p.stat().st_mode)==0o644 for p in paths)"
@@ -229,6 +230,16 @@ def main():
             assert (initial['radionoise'],initial['radionoisefile'],initial['radionoisevolume'])==('true','/usr/local/share/mumble-funk/audio/radio-noise.wav','20')
             digest=compose('exec','-T','mumble-funk','sha256sum',initial['radionoisefile']).stdout.split()[0]
             assert digest==b'dc0a1c97115eb797f261af52631288b868a648d0d9310fff0a431e8163536312'
+            fresh=command([str(args.probe),str(port),'--cb-defaults'],input=(values['serverpassword']+'\n').encode())
+            assert b'CB defaults verified' in fresh.stdout
+            print(fresh.stdout.decode(),end='')
+            assert b'Experimental analog voice enabled: cb-am;' in compose('logs').stdout
+            # Keep all historical direct-path packet-byte tests at their explicit
+            # old settings, after testing the actual fresh CB configuration.
+            compose('stop','mumble-funk')
+            legacy="from pathlib import Path;p=Path('/etc/mumble-funk/server.ini');p.write_bytes(p.read_bytes().replace(b'analogvoice=true',b'analogvoice=false').replace(b'busytonevolume=100',b'busytonevolume=50').replace(b'squelchopenvolume=80',b'squelchopenvolume=50').replace(b'squelchclosevolume=80',b'squelchclosevolume=50'))"
+            compose('run','--rm','--no-deps','-T','--entrypoint','python3','mumble-funk','-c',legacy)
+            compose('start','mumble-funk');healthy()
             if args.radio_noise:
                 fresh=command([str(args.probe),str(port),'--radio-noise'],input=(values['serverpassword']+'\n').encode())
                 assert b'Container Open/Noise/Close verified' in fresh.stdout

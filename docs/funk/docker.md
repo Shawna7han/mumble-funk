@@ -7,12 +7,18 @@ eigene WAVs werden bei Updates nicht automatisch geändert.
 
 Der aktuelle experimentelle **`dev`-Stand nach PR #9** enthält die gemeinsame Audio-Engine
 und die experimentelle Squelch-Vorschau auf Mumble Server 1.5.939. Das ist keine
-Stable-Freigabe. Neue Konfigurationen aktivieren Simplex, Busy, Squelch Open/Close
-bei 50 % und +8 dB; Mumla-Timeout-Close ist ebenfalls aktiv. Vorhandene INIs bleiben unverändert.
+Stable-Freigabe. Auf `feature/analog-voice-live` bereitet Draft-PR #15 neue
+Konfigurationen mit Simplex und Analog Voice (`cb-am`) vor: Busy bei 100 %,
+Squelch Open/Close bei 80 % und +8 dB; Mumla-Timeout-Close ist ebenfalls aktiv.
+Für `dev` gelten diese neuen CB-Vorgaben erst nach einer gesonderten Übernahme.
+Vorhandene INIs bleiben bei Updates, Container-Neuerstellung und Backup/Restore
+unverändert, einschließlich fehlender Schlüssel, `analogvoice=false`, anderer
+Profile, eigener Pegel und bewusst deaktivierter Funktionen. Kein CB-Preset-Schalter.
 Funkrauschen ist bei **neuen INIs eingeschaltet**, mit der mitgelieferten
 CC0-Aufnahme `/usr/local/share/mumble-funk/audio/radio-noise.wav` bei Lautstärke 20.
 Bestehende Einstellungen und auch fehlende Rauschschlüssel werden nicht migriert.
-Die vorhandene Open/Noise/Close-Engine wird unverändert auch in Docker verwendet.
+Die vorhandene Open/Noise/Close-Engine wird unverändert auch in Docker verwendet;
+analoge Sprache und Effekte bleiben getrennte Opus-Streams ohne PCM-Mixing.
 Details und Bestandsschutz: [Standard-Audioeinstellungen](audio-defaults.md).
 Die Anleitung für Aktivierung, eigene WAVs und getrennte Open-/Close-Einstellungen
 steht in [squelch-preview.md](squelch-preview.md#docker-assets-and-management).

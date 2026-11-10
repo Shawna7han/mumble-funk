@@ -33,9 +33,12 @@ Nicht in ein bereits vorhandenes Quellverzeichnis klonen. Das Setup installiert
 Abhängigkeiten, baut den Server, führt die Servertests aus und installiert erst
 bei Erfolg. Der normale Dienst heißt **`mumble-funk`**, der Port ist **64739 TCP/UDP**.
 Es gibt keinen zusätzlichen Preview-Dienst oder Preview-Port. Die vorhandenen
-Audio-Standardeinstellungen werden nur beim Erzeugen einer fehlenden INI
-gesetzt: Simplex, AudioFeedback, Busy, Open/Close, Timeout-Close und Funkrauschen
-aktiv; Busy/Open/Close bei 50 %, deren Boost +8 dB und Rauschen bei 20.
+Audio-Standardeinstellungen werden ausschließlich bei einer vollständig neuen
+Installation gesetzt. Draft-PR #15 bereitet auf `feature/analog-voice-live` den
+CB-Standard vor: Simplex, Analog Voice (`cb-am`), AudioFeedback, Busy, Open/Close,
+Timeout-Close und Funkrauschen aktiv; Busy bei 100 %, Open/Close bei 80 %, deren
+Boost +8 dB und Rauschen bei 20. Diese Werte gelten auf `dev` erst nach einer
+gesonderten Übernahme; die folgenden Dev-Befehle wechseln nicht den Branch.
 Alle vier CC0-WAVs werden unter `/usr/local/share/mumble-funk/audio/` installiert.
 Vorhandene INIs einschließlich fehlender Schlüssel, eigene WAVs und bewusst
 deaktivierte Effekte bleiben erhalten. [Genaue Vorgaben](audio-defaults.md).
@@ -97,6 +100,13 @@ Audio-Einstellungen. Vor dem Austausch werden Konfiguration und Datenbankordner
 unter `/var/backups/mumble-funk/` gesichert; nur der eigene Funkdienst wird bei der
 Bereitstellung kurz gestoppt. Sicherungen enthalten Geheimnisse und gehören nicht
 ins Repository. [Sicherung und Rückkehr zur vorherigen Version](setup.md#updates).
+
+Auch nach Übernahme von PR #15 bleibt ein vorhandener Dev-VPS bei diesen
+Updatebefehlen vollständig bei seiner bisherigen INI, einschließlich fehlender
+Schlüssel und bewusst ausgeschalteter Funktionen. Es gibt keinen
+`--apply-cb-preset`-Schalter und keinen Updatebefehl, der zugleich automatisch die
+CB-Neuinstallationswerte übernimmt. Vorhandene Konfigurationen nicht löschen,
+um eine Neuerzeugung zu erzwingen.
 
 Diese Anleitung wechselt eine bestehende Stable-Installation nicht automatisch
 auf `dev`. Für den ersten Versuch die separate Snapshot-Test-VM verwenden.
