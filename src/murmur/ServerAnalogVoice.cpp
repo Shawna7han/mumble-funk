@@ -17,7 +17,54 @@ using Stream  = funkvoice::AnalogVoiceStream;
 // process-wide opt-in cost as well as each individual service's fixed pools.
 unsigned int analogServers              = 0;
 constexpr unsigned int MaxAnalogServers = 4;
+const char *admissionName(Service::Admission status) {
+	switch (status) {
+		case Service::Admission::Accepted: return "accepted";
+		case Service::Admission::Stopped: return "stopped";
+		case Service::Admission::Stale: return "stale";
+		case Service::Admission::Invalid: return "invalid";
+		case Service::Admission::InputFull: return "input_full";
+		case Service::Admission::Faulted: return "faulted";
+		case Service::Admission::Closed: return "closed";
+	}
+	return "unknown";
+}
+const char *failureName(Service::Failure failure) {
+	switch (failure) {
+		case Service::Failure::None: return "ready";
+		case Service::Failure::InputFull: return "input_full";
+		case Service::Failure::Expired: return "expired";
+		case Service::Failure::Codec: return "codec";
+		case Service::Failure::Sequence: return "sequence";
+	}
+	return "unknown";
+}
 } // namespace
+
+void Server::recordAnalogVoice(const char *stage, const char *reason, const Service::Ticket &ticket,
+	std::size_t outputs, std::size_t recipients, std::size_t handoffs, bool udp, std::uint64_t outputFrame) {
+	if (!m_simplexLogger)
+		return;
+	SimplexController::Event event;
+	event.context.connection = ticket.sender.connection;
+	event.context.session = ticket.sender.session;
+	event.context.channel = ticket.sender.channel;
+	event.event = QString::fromLatin1(stage);
+	event.reason = QString::fromLatin1(reason);
+	event.timeUs = SimplexController::monotonicUs();
+	event.frame = ticket.sourceFrame;
+	event.udp = udp;
+	event.analogGeneration = ticket.generation;
+	event.analogTicket = ticket.channelTicket;
+	event.analogEpoch = ticket.routingGeneration;
+	event.analogSamples = ticket.samples;
+	event.analogOutputs = outputs;
+	event.analogRecipients = recipients;
+	event.analogHandoffs = handoffs;
+	event.analogOutputFrame = outputFrame;
+	// Existing bounded, try-lock queue; no disk IO, user pointer or payload.
+	m_simplexLogger->submit(event);
+}
 
 void Server::initializeAnalogVoice() {
 	const QString enabled = getConf("analogvoice", Meta::mp.analogVoice).toString().trimmed().toLower();
@@ -54,13 +101,20 @@ void Server::shutdownAnalogVoice() {
 		m_analogVoice->shutdown();
 		const auto stats = m_analogVoice->statistics();
 		log(QStringLiteral(
-				"Analog voice stopped: accepted=%1 inputFull=%2 expired=%3 codecErrors=%4 noLane=%5 bypassStarts=%6")
+				"Analog voice stopped: accepted=%1 inputFull=%2 expired=%3 codecErrors=%4 noLane=%5 bypassStarts=%6 "
+				"openBusy=%7 openInvalid=%8 stale=%9 invalid=%10 closed=%11 stopped=%12 faulted=%13 "
+				"processed=%14 published=%15 taken=%16 handoffPackets=%17 handoffRecipients=%18 "
+				"senderRejected=%19 noRecipients=%20 transportDropped=%21")
 				.arg(stats.accepted)
 				.arg(stats.inputFull)
 				.arg(stats.expired)
 				.arg(stats.codecErrors)
 				.arg(stats.noLane)
-				.arg(stats.bypassStarts));
+				.arg(stats.bypassStarts).arg(stats.openBusy).arg(stats.openInvalid)
+				.arg(stats.stale).arg(stats.invalid).arg(stats.closed).arg(stats.stopped).arg(stats.faulted)
+				.arg(stats.processedJobs).arg(stats.publishedPackets).arg(stats.takenPackets)
+				.arg(m_analogHandoffPackets).arg(m_analogHandoffRecipients).arg(m_analogSenderRejected)
+				.arg(m_analogNoRecipients).arg(m_analogTransportDropped));
 		m_analogVoice.reset();
 		--analogServers;
 	}
@@ -89,8 +143,18 @@ void Server::releaseAnalogVoice(const SimplexController::Event &event) {
 	for (auto &entry : m_analogTransmissions) {
 		if (entry.connection != event.context.connection)
 			continue;
-		if (event.reason == QLatin1String("timeout_suspected"))
-			m_analogVoice->finish(entry.handle, event.frame, Service::Time(std::chrono::microseconds(event.timeUs)));
+		if (event.reason == QLatin1String("timeout_suspected")) {
+			const auto receipt = m_analogVoice->finish(entry.handle, event.frame, Service::Time(std::chrono::microseconds(event.timeUs)));
+			auto ticket = receipt.ticket;
+			if (!ticket.generation) {
+				ticket.sender.connection = event.context.connection;
+				ticket.sender.session = event.context.session;
+				ticket.sender.channel = event.context.channel;
+				ticket.generation = entry.handle.generation;
+				ticket.sourceFrame = event.frame;
+			}
+			recordAnalogVoice("analog_finish", admissionName(receipt.status), ticket);
+		}
 		else {
 			m_analogVoice->cancel(entry.handle);
 			if (m_squelchPlan)
@@ -104,6 +168,11 @@ void Server::submitAnalogVoice(ServerUser &user, const Mumble::Protocol::AudioDa
 							   AudioReceiverBuffer &receivers, bool started) {
 	// Voice read lock + the still-live Transmission guard serialize this handoff.
 	AnalogTransmission *entry = nullptr;
+	Service::Ticket context;
+	context.sender = user.analogIdentity;
+	context.routingGeneration = user.analogIdentity.epoch;
+	context.sourceFrame = audio.frameNumber;
+	const bool udp = &receivers == &m_udpAudioReceivers;
 	for (auto &candidate : m_analogTransmissions)
 		if (candidate.connection == user.diagnosticConnection)
 			entry = &candidate;
@@ -113,13 +182,18 @@ void Server::submitAnalogVoice(ServerUser &user, const Mumble::Protocol::AudioDa
 			*entry = {};
 		}
 		const auto handle = m_analogVoice->open(user.analogIdentity);
-		if (!handle)
+		if (!handle) {
+			recordAnalogVoice("analog_submit", "open_refused", context, 0, 0, 0, udp);
 			return; // No ticket lane: never bypass the channel barrier.
+		}
 		entry  = &m_analogTransmissions[handle.lane];
 		*entry = { user.diagnosticConnection, handle };
 	}
-	if (!entry)
+	if (!entry) {
+		recordAnalogVoice("analog_submit", "no_active_generation", context, 0, 0, 0, udp);
 		return;
+	}
+	context.generation = entry->handle.generation;
 	Service::Input input;
 	input.payload = audio.payload.data();
 	input.bytes   = audio.payload.size();
@@ -128,6 +202,7 @@ void Server::submitAnalogVoice(ServerUser &user, const Mumble::Protocol::AudioDa
 	const int samples =
 		input.bytes ? opus_packet_get_nb_samples(input.payload, static_cast< opus_int32 >(input.bytes), 48000) : 0;
 	if (audio.usedCodec != Mumble::Protocol::AudioCodec::Opus || samples < 0) {
+		recordAnalogVoice("analog_submit", "invalid_codec_or_payload", context, 0, 0, 0, udp);
 		m_analogVoice->cancel(entry->handle);
 		*entry = {};
 		return;
@@ -142,6 +217,7 @@ void Server::submitAnalogVoice(ServerUser &user, const Mumble::Protocol::AudioDa
 			if (!identity.epoch)
 				continue;
 			if (input.recipients.count == Service::MaxRecipients) {
+				recordAnalogVoice("analog_submit", "recipient_capacity", context, 0, input.recipients.count, 0, udp);
 				m_analogVoice->cancel(entry->handle);
 				*entry = {};
 				return; // Refuse the generation rather than silently selecting a subset.
@@ -152,6 +228,8 @@ void Server::submitAnalogVoice(ServerUser &user, const Mumble::Protocol::AudioDa
 		}
 	}
 	const auto receipt = m_analogVoice->submit(entry->handle, input);
+	recordAnalogVoice("analog_submit", admissionName(receipt.status),
+		receipt.ticket.channelTicket ? receipt.ticket : context, 0, input.recipients.count, 0, udp);
 	if (receipt.status == Service::Admission::Invalid || receipt.status == Service::Admission::Stale
 		|| receipt.status == Service::Admission::Stopped || receipt.status == Service::Admission::Closed) {
 		m_analogVoice->cancel(entry->handle);
@@ -177,10 +255,15 @@ void Server::deliverAnalogVoice() {
 	AudioReceiverBuffer receivers;
 	Mumble::Protocol::UDPAudioEncoder< Mumble::Protocol::Role::Server > encoder;
 	while (m_analogVoice->take(batch)) {
+		recordAnalogVoice("analog_result", failureName(batch.failure), batch.completed, batch.audio.count, batch.recipients.count);
 		auto *sender = qhUsers.value(batch.completed.sender.session, nullptr);
 		if (!sender || !(sender->analogIdentity == batch.completed.sender)
 			|| sender->sState != ServerUser::Authenticated || !sender->cChannel || sender->bMute || sender->bSuppress
 			|| sender->bSelfMute || !ChanACL::hasPermission(sender, sender->cChannel, ChanACL::Speak, nullptr)) {
+			++m_analogSenderRejected;
+			const char *reason = !sender ? "sender_missing" : !(sender->analogIdentity == batch.completed.sender)
+				? "sender_identity" : "sender_eligibility";
+			recordAnalogVoice("analog_discard", reason, batch.completed, batch.audio.count, batch.recipients.count);
 			if (m_squelchPlan)
 				m_squelchPlan->invalidate(batch.completed.sender.connection);
 			continue;
@@ -199,12 +282,16 @@ void Server::deliverAnalogVoice() {
 				audio.containsPositionalData = metadata->positional;
 			}
 			receivers.clear();
+			bool staleRecipient = false;
 			for (std::size_t r = 0; r < batch.recipients.count; ++r) {
 				const auto &identity = batch.recipients.identities[r];
 				auto *receiver       = qhUsers.value(identity.session, nullptr);
 				if (!receiver || !(receiver->analogIdentity == identity)
 					|| receiver->sState != ServerUser::Authenticated || receiver->cChannel != sender->cChannel)
+				{
+					staleRecipient = true;
 					continue;
+				}
 				const bool positional = metadata && metadata->positional
 										&& std::find(metadata->positionalConnections.begin(),
 													 metadata->positionalConnections.end(), identity.connection)
@@ -212,7 +299,18 @@ void Server::deliverAnalogVoice() {
 				receivers.addReceiver(*sender, *receiver, Mumble::Protocol::AudioContext::NORMAL, positional);
 			}
 			Service::Recipients delivered;
+			std::size_t currentRecipients = 0;
+			for (bool positional : {true, false}) currentRecipients += receivers.getReceivers(positional).size();
 			sendVoicePacket(audio, receivers, encoder, true, &delivered);
+			if (delivered.count) {
+				++m_analogHandoffPackets;
+				m_analogHandoffRecipients += delivered.count;
+			} else if (currentRecipients) ++m_analogTransportDropped;
+			else ++m_analogNoRecipients;
+			const char *reason = delivered.count ? "local_handoff" : currentRecipients ? "transport_drop"
+				: staleRecipient ? "recipient_identity_or_channel" : batch.recipients.count ? "recipient_eligibility" : "empty_snapshot";
+			recordAnalogVoice("analog_handoff", reason,
+				batch.completed, 1, currentRecipients, delivered.count, false, packet.frame);
 			if (m_squelchPlan)
 				requestAnalogCues(m_analogLifecycle.delivered(*m_squelchPlan, batch, i, delivered));
 		}

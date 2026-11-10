@@ -106,6 +106,19 @@ void SimplexLogger::run() {
 			object.insert(QStringLiteral("frame"), QString::number(event.frame));
 			object.insert(QStringLiteral("packets"), QString::number(event.packets));
 			object.insert(QStringLiteral("transport"), event.udp ? QStringLiteral("udp") : QStringLiteral("tcp"));
+			if (event.event.startsWith(QLatin1String("analog_"))) {
+				if (event.event != QLatin1String("analog_submit"))
+					object.insert(QStringLiteral("transport"), QStringLiteral("server"));
+				object.insert(QStringLiteral("generation"), QString::number(event.analogGeneration));
+				object.insert(QStringLiteral("ticket"), QString::number(event.analogTicket));
+				object.insert(QStringLiteral("routing_epoch"), QString::number(event.analogEpoch));
+				object.insert(QStringLiteral("samples"), int(event.analogSamples));
+				object.insert(QStringLiteral("output_packets"), int(event.analogOutputs));
+				object.insert(QStringLiteral("recipients"), int(event.analogRecipients));
+				object.insert(QStringLiteral("local_handoffs"), int(event.analogHandoffs));
+				if (event.event == QLatin1String("analog_handoff"))
+					object.insert(QStringLiteral("output_frame"), QString::number(event.analogOutputFrame));
+			}
 			if (!write(object)) {
 				fail();
 				return;

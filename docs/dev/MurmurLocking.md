@@ -326,6 +326,15 @@ context alive until join returns. See [B3](../funk/analog-voice-b3.md) and the
 
 ### Experimental Server integration (B4)
 
+B6B adds optional `analog_*` pipeline records to the existing SimplexLogger.
+They use its bounded try-lock queue under the already-held Simplex/voice guard;
+the dispatcher emits records only after the service mutex has been released.
+No audio content, synchronous disk IO, worker-to-server callbacks or new event
+queues are introduced. Service statistics remain protected by the service mutex;
+local handoff counters are main-thread-only. Missing log records are permitted
+and reported as diagnostic loss; exact admission totals use service counters.
+See [the B6B investigation](../funk/analog-voice-b6b.md).
+
 With a successfully configured `analogvoice=true` service, `processMsg` replaces
 local submission with `open`/`submit` while its original Transmission guard still
 owns the Simplex mutex. `started` alone opens a generation. The order is voice

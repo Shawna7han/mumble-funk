@@ -133,6 +133,11 @@ protected:
 	void submitAnalogVoice(ServerUser &user, const Mumble::Protocol::AudioData &audio, AudioReceiverBuffer &receivers,
 						   bool started);
 	void deliverAnalogVoice();
+	void recordAnalogVoice(const char *stage, const char *reason, const funkvoice::AnalogVoiceService::Ticket &ticket,
+		std::size_t outputs = 0, std::size_t recipients = 0, std::size_t handoffs = 0, bool udp = false,
+		std::uint64_t outputFrame = 0);
+	std::uint64_t m_analogHandoffPackets = 0, m_analogHandoffRecipients = 0;
+	std::uint64_t m_analogSenderRejected = 0, m_analogNoRecipients = 0, m_analogTransportDropped = 0;
 	AnalogVoiceLifecycle m_analogLifecycle;
 	void requestAnalogCues(const std::vector< SquelchPlan::Cue > &cues, bool timeout = false);
 	void sendVoicePacket(Mumble::Protocol::AudioData audio, AudioReceiverBuffer &receivers,

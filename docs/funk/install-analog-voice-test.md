@@ -1,8 +1,9 @@
 # Bestehende Ubuntu-Testinstallation auf Analog Voice aktualisieren
 
 Nur für die eigene Proxmox-Test-VM (Ubuntu 24.04/26.04 LTS, normaler Benutzer mit
-sudo). Experimentell, keine Produktivfreigabe. B6B führt der Betreiber später
-selbst durch. Diese Anleitung wurde hier nicht auf einem externen Server ausgeführt.
+sudo). Experimentell, keine Produktivfreigabe. Die [B6B-Fehleranalyse](analog-voice-b6b.md)
+ersetzt keinen neuen praktischen Hörtest nach ausdrücklicher Betreiberfreigabe.
+Diese Anleitung wurde hier nicht auf einem externen Server ausgeführt.
 
 ## Vorbereiten und Quellen wechseln
 
@@ -37,7 +38,7 @@ Entwicklung oder Zusatzcommits auf dem Installationscheckout durchführen.
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/feature/analog-voice-live
-bash scripts/funk/setup.sh --experimental-analog-voice
+FUNK_BUILD_JOBS=1 bash scripts/funk/setup.sh --experimental-analog-voice
 ```
 
 Der explizite Fetch funktioniert auch aus einem früheren `--single-branch`-Clone.
@@ -46,10 +47,16 @@ Gleichheit von HEAD, lokalem Remote-Ref und live veröffentlichtem Commit. Jeder
 Fehler beendet das Setup. Bei zwischenzeitlichem Branchfortschritt erst prüfen
 und erneut fetchen; die Schutzprüfung nicht umgehen.
 
+`FUNK_BUILD_JOBS=1` begrenzt den Build auf einen Compilerprozess. Das Setup
+verlangt weiterhin mindestens 2 GiB RAM einschließlich Swap und 8 GiB freien
+Platz; 4 GiB RAM sind empfohlen. Diese Prüfungen nicht umgehen. Eine vorhandene
+INI wird beim Update einschließlich fehlender Schlüssel und eigener Werte
+unverändert übernommen. Es wird kein CB-Preset auf bestehende Installationen angewendet.
+
 Alternativ bei bereits vorbereiteten Abhängigkeiten:
 
 ```bash
-bash scripts/funk/build.sh --experimental-analog-voice
+FUNK_BUILD_JOBS=1 bash scripts/funk/build.sh --experimental-analog-voice
 sudo bash scripts/funk/install.sh --experimental-analog-voice
 ```
 

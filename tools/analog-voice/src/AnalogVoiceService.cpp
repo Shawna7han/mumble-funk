@@ -193,6 +193,17 @@ struct AnalogVoiceService::Impl {
 				 clock(),
 				 {} };
 	}
+	Receipt reject(Admission status, const Ticket &value = {}) {
+		switch (status) {
+			case Admission::Stopped: ++stats.stopped; break;
+			case Admission::Stale: ++stats.stale; break;
+			case Admission::Invalid: ++stats.invalid; break;
+			case Admission::Closed: ++stats.closed; break;
+			case Admission::Faulted: ++stats.faulted; break;
+			default: break;
+		}
+		return {status, value};
+	}
 	// Called with the mutex held. Result capacity belongs exclusively to this
 	// worker from selection until publication; producers can only invalidate it.
 	bool workAvailable(const Lane &entry) const {
@@ -305,6 +316,7 @@ struct AnalogVoiceService::Impl {
 				output.terminal  = entry.closing;
 				mapSources(entry, output);
 				entry.output        = std::move(output);
+				stats.publishedPackets += entry.output.audio.count;
 				entry.ready         = true;
 				entry.faultReported = true;
 				continue;
@@ -373,6 +385,7 @@ struct AnalogVoiceService::Impl {
 				nextFrame = codec.nextOutputFrame();
 			}
 			lock.lock();
+			++stats.processedJobs;
 			owner = nullptr;
 			for (auto &candidate : connections) {
 				if (candidate.identity.lifetime == entry.sender.lifetime && candidate.identity.epoch) {
@@ -438,6 +451,7 @@ struct AnalogVoiceService::Impl {
 				}
 			}
 			entry.output = std::move(output);
+			stats.publishedPackets += entry.output.audio.count;
 			entry.ready  = true;
 		}
 		lock.unlock();
@@ -537,10 +551,12 @@ AnalogVoiceService::Handle AnalogVoiceService::open(Identity sender, bool bypass
 	std::lock_guard< std::mutex > lock(impl.mutex);
 	Impl::Connection *owner = impl.connection(sender);
 	if (impl.stopping || !owner || !owner->send) {
+		++impl.stats.openInvalid;
 		return {};
 	}
 	for (const auto &entry : impl.lanes) {
 		if (entry.handle && !entry.cancelled && !entry.closing && entry.sender.channel == sender.channel) {
+			++impl.stats.openBusy;
 			return {};
 		}
 	}
@@ -581,31 +597,31 @@ AnalogVoiceService::Receipt AnalogVoiceService::submit(Handle handle, const Inpu
 	Impl &impl = *m_impl;
 	std::lock_guard< std::mutex > lock(impl.mutex);
 	if (impl.stopping) {
-		return { Admission::Stopped, {} };
+		return impl.reject(Admission::Stopped);
 	}
 	Impl::Lane *entry = impl.lane(handle);
 	if (!entry) {
-		return { Admission::Stale, {} };
+		return impl.reject(Admission::Stale);
 	}
 	if (entry->closing) {
-		return { Admission::Closed, {} };
+		return impl.reject(Admission::Closed);
 	}
 	if (input.bytes > Stream::MaxInputBytes || (input.bytes && !input.payload) || input.recipients.count > MaxRecipients
 		|| (!input.bytes && !input.end) || (input.bytes && (!input.samples || input.samples > InputSamples))
 		|| (!input.bytes && input.samples)) {
-		return { Admission::Invalid, {} };
+		return impl.reject(Admission::Invalid);
 	}
 	if (input.bytes
 		&& opus_packet_get_nb_samples(input.payload, static_cast< opus_int32 >(input.bytes), 48000)
 			   != static_cast< int >(input.samples)) {
-		return { Admission::Invalid, {} };
+		return impl.reject(Admission::Invalid);
 	}
 	Impl::Job job;
 	job.ticket = impl.ticket(*entry, input.frame, input.samples, input.end, false);
 	job.ticket.metadata = input.metadata;
 	if (!job.ticket.channelTicket) {
 		impl.fault(*entry, Failure::Sequence);
-		return { Admission::Faulted, {} };
+		return impl.reject(Admission::Faulted);
 	}
 	if (input.end) {
 		entry->closing = true;
@@ -613,7 +629,7 @@ AnalogVoiceService::Receipt AnalogVoiceService::submit(Handle handle, const Inpu
 	}
 	if (entry->failure != Failure::None) {
 		impl.changed.notify_one();
-		return { Admission::Faulted, job.ticket };
+		return impl.reject(Admission::Faulted, job.ticket);
 	}
 	if (entry->count == InputPackets || entry->samples + input.samples > InputSamples) {
 		++impl.stats.inputFull;
@@ -645,14 +661,14 @@ AnalogVoiceService::Receipt AnalogVoiceService::finish(Handle handle, std::uint6
 	Impl &impl = *m_impl;
 	std::lock_guard< std::mutex > lock(impl.mutex);
 	if (impl.stopping) {
-		return { Admission::Stopped, {} };
+		return impl.reject(Admission::Stopped);
 	}
 	Impl::Lane *entry = impl.lane(handle);
 	if (!entry) {
-		return { Admission::Stale, {} };
+		return impl.reject(Admission::Stale);
 	}
 	if (entry->closing) {
-		return { Admission::Closed, entry->end.ticket };
+		return impl.reject(Admission::Closed, entry->end.ticket);
 	}
 	entry->end.ticket = impl.ticket(*entry, lastSourceFrame, 0, true, true);
 	if (endedAt != Time{})
@@ -660,7 +676,7 @@ AnalogVoiceService::Receipt AnalogVoiceService::finish(Handle handle, std::uint6
 	entry->closing    = true;
 	if (!entry->end.ticket.channelTicket) {
 		impl.fault(*entry, Failure::Sequence);
-		return { Admission::Faulted, entry->end.ticket };
+		return impl.reject(Admission::Faulted, entry->end.ticket);
 	}
 	impl.changed.notify_one();
 	return { Admission::Accepted, entry->end.ticket };
@@ -705,6 +721,7 @@ bool AnalogVoiceService::take(Batch &batch) {
 			continue;
 		}
 		batch            = entry.output;
+		impl.stats.takenPackets += batch.audio.count;
 		batch.handle     = entry.handle;
 		batch.recipients = {};
 		for (std::size_t i = 0; i < entry.recipients.count; ++i) {

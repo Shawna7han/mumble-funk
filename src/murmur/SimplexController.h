@@ -5,6 +5,7 @@
 
 #include <QtCore/QString>
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -34,6 +35,11 @@ public:
 		std::uint64_t frame   = 0;
 		std::uint64_t packets = 0;
 		bool udp              = false;
+		// Optional Analog Voice pipeline metadata, serialized only for analog_* events.
+		std::uint64_t analogGeneration = 0, analogTicket = 0, analogEpoch = 0;
+		std::uint64_t analogOutputFrame = 0;
+		std::uint32_t analogSamples = 0;
+		std::size_t analogOutputs = 0, analogRecipients = 0, analogHandoffs = 0;
 	};
 	using Clock = std::function< std::int64_t() >;
 	using Sink  = std::function< void(const Event &) >;

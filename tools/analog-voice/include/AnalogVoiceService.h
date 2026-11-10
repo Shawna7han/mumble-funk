@@ -88,6 +88,8 @@ public:
 	struct Statistics {
 		std::uint64_t accepted = 0, inputFull = 0, expired = 0, codecErrors = 0;
 		std::uint64_t staleResults = 0, cancelled = 0, bypassStarts = 0, noLane = 0;
+		std::uint64_t openBusy = 0, openInvalid = 0, stale = 0, invalid = 0, closed = 0, stopped = 0, faulted = 0;
+		std::uint64_t processedJobs = 0, publishedPackets = 0, takenPackets = 0;
 	};
 
 	// Injection boundary for deterministic scheduling/fault tests. Only the worker

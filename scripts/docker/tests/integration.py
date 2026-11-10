@@ -156,9 +156,15 @@ def main():
         return result
     def docker(*argv,**kwargs):return command(['docker',*argv],**kwargs)
     def compose(*argv,**kwargs):return docker('compose',*argv,**kwargs)
-    def probe(password=None):
-        result=command([str(args.probe),str(port)],input=((password if password is not None else values['serverpassword'])+'\n').encode())
+    def probe(password=None, settings=None):
+        mode=[]
+        if settings and settings.get('analogvoice','false').lower() in ('true','1'):
+            mode=['--analog-forwarding',settings.get('analogvoiceprofile','cb-am')]
+        result=command([str(args.probe),str(port),*mode],input=((password if password is not None else values['serverpassword'])+'\n').encode())
         assert b'encrypted UDP' in result.stdout
+        if mode:
+            assert b'received and decoded' in result.stdout
+            print(result.stdout.decode(),end='')
     def healthy(project_name=project):
         deadline=time.monotonic()+30
         while time.monotonic()<deadline:
@@ -536,7 +542,7 @@ def main():
                 assert volume_identity(actual)==old_volumes and actual['HostConfig']['PortBindings']==old_ports
                 if args.radio_noise:
                     assert compose('exec','-T','mumble-funk','cat','/var/lib/mumble-funk/audio/radio-noise.wav',project_name=upgrade).stdout==noise_bytes
-                probe(old['serverpassword'])
+                probe(old['serverpassword'],old)
                 compose('stop',project_name=upgrade)
                 assert fingerprint(upgrade)==old_state
                 # A true rollback to the previous binary, using the same named
@@ -550,6 +556,7 @@ def main():
                 assert volume_identity(actual)==old_volumes and actual['HostConfig']['PortBindings']==old_ports
                 if args.radio_noise:
                     assert compose('exec','-T','mumble-funk','cat','/var/lib/mumble-funk/audio/radio-noise.wav',project_name=upgrade).stdout==noise_bytes
+                probe(old['serverpassword'],old)
                 compose('stop',project_name=upgrade)
                 assert fingerprint(upgrade)==old_state
                 scenario='real image update AND rollback' if args.previous_image!=args.image else 'local/prebuilt Compose migration AND rollback'

@@ -253,6 +253,71 @@ static void radioNoise(Client &a, Client &b, Client &receiver, bool cbDefaults =
           <<"TCP + encrypted UDP, Busy and "<<(cbDefaults?"filtered speech":"unchanged speech")<<std::endl;
 }
 
+// Migration must exercise the preserved Analog Voice setting with real Opus.
+// The historical opaque-payload probe is exclusively a direct-path contract.
+static void analogForwarding(Client &a,Client &b,Client &receiver,const std::string &profile) {
+ auto check=[](bool ok,const char *message){if(!ok){std::cerr<<message<<std::endl;std::exit(1);}};
+ const auto voice=AudioSignal::encode(AudioSignal::syntheticBusy(),100).front();
+ QTest::qWait(30); // Same fresh bandwidth-window setup as the existing real-Opus probes.
+ auto send=[&](Client &sender,std::uint64_t frame,bool last,bool udp){
+  Mumble::Protocol::AudioData audio;audio.frameNumber=frame;audio.isLastFrame=last;
+  audio.payload={reinterpret_cast<const Mumble::Protocol::byte*>(voice.constData()),std::size_t(voice.size())};
+  Mumble::Protocol::UDPAudioEncoder<Mumble::Protocol::Role::Client> encoder(sender.version);
+  const auto encoded=encoder.encodeAudioPacket(audio);
+  if(udp&&sender.udp.state()==QAbstractSocket::UnconnectedState)
+   check(sender.udp.bind(QHostAddress(QHostAddress::LocalHost),0),"Migration UDP bind failed");
+  const QByteArray packet(reinterpret_cast<const char*>(encoded.data()),int(encoded.size()));
+  return udp?sender.sendEncrypted(packet):sender.sendRaw(Type::UDPTunnel,packet);
+ };
+ for(int turn=0;turn<4;++turn){
+  Client &sender=turn%2?b:a,&blocked=turn%2?a:b;
+  const bool udp=turn==1||turn==2;
+  const std::uint64_t base=1000+std::uint64_t(turn)*100;
+  funkvoice::AnalogVoiceStream reference(funkvoice::profile(profile));
+  check(reference.begin(base),"Migration reference failed to begin");
+  QList<Received> expected;
+  for(int i=0;i<3;++i){
+   const auto frame=base+std::uint64_t(i)*2;
+   check(send(sender,frame,i==2,udp),"Migration Opus send failed");
+   funkvoice::AnalogVoiceStream::Result result;
+   reference.process({reinterpret_cast<const unsigned char*>(voice.constData()),std::size_t(voice.size()),frame,i==2},result);
+   check(result.error==funkvoice::AnalogVoiceStream::Error::None,"Migration reference codec error");
+   for(std::size_t j=0;j<result.count;++j){const auto &p=result.packets[j];
+    expected.append({sender.session,p.frame,p.end!=funkvoice::AnalogVoiceStream::End::None,
+     QByteArray(reinterpret_cast<const char*>(p.payload.data()),int(p.bytes))});}
+   if(i==0){
+    // Different TCP/UDP ingress queues have no cross-connection send order.
+    check(udp?sender.udpBarrier():sender.barrier(),"Migration owner admission fence failed");
+    check(send(blocked,base+50,true,!udp),"Migration competing sender failed");
+    check(!udp?blocked.udpBarrier():blocked.barrier(),"Migration blocked attempt fence failed");
+   }
+   QTest::qWait(20);
+  }
+  check(udp?sender.udpBarrier():sender.barrier(),"Migration transport fence failed");
+  const auto all=receiver.audio(80,expected.size());QList<Received> actual;
+  for(const auto &p:all)if(p.session!=receiver.session){
+   check(p.session==sender.session,"Migration allowed competing speech");actual.append(p);}
+  if(actual.size()!=expected.size())std::cerr<<"Migration turn="<<turn<<" packets="<<actual.size()<<" expected="<<expected.size()<<std::endl;
+  check(!actual.isEmpty()&&actual.size()==expected.size(),"Migration filtered speech/tail missing");
+  int error=0;
+  std::unique_ptr<OpusDecoder,decltype(&opus_decoder_destroy)> decoder(opus_decoder_create(48000,1,&error),opus_decoder_destroy);
+  std::unique_ptr<OpusDecoder,decltype(&opus_decoder_destroy)> referenceDecoder(opus_decoder_create(48000,1,&error),opus_decoder_destroy);
+  check(decoder&&referenceDecoder&&!error,"Migration decoder initialization failed");
+  double dot=0,x2=0,y2=0;
+  for(int i=0;i<actual.size();++i){const auto &p=actual[i];
+   check(p.frame==expected[i].frame&&p.last==expected[i].last,"Migration media clock/end changed");
+   check(p.payload!=voice,"Migration bypassed Analog Voice");
+   std::array<float,960> pcm{},ref{};
+   check(opus_decode_float(decoder.get(),reinterpret_cast<const unsigned char*>(p.payload.constData()),p.payload.size(),pcm.data(),960,0)==960,"Migration speech undecodable");
+   check(opus_decode_float(referenceDecoder.get(),reinterpret_cast<const unsigned char*>(expected[i].payload.constData()),expected[i].payload.size(),ref.data(),960,0)==960,"Migration reference undecodable");
+   for(std::size_t j=0;j<pcm.size();++j){check(std::isfinite(pcm[j]),"Migration speech nonfinite");
+    dot+=double(pcm[j])*ref[j];x2+=double(pcm[j])*pcm[j];y2+=double(ref[j])*ref[j];}
+  }
+  check(x2>0&&y2>0&&dot/std::sqrt(x2*y2)>.98,"Migration speech does not match selected profile");
+ }
+ std::cout<<"Analog migration TCP + encrypted UDP received and decoded; profile="<<profile<<"; ordered tails and Simplex verified"<<std::endl;
+}
+
 int main(int argc,char **argv) {
  QCoreApplication app(argc,argv);
  if(argc<2) return 2;
@@ -261,12 +326,15 @@ int main(int argc,char **argv) {
  auto check=[](bool ok,const char *message) {if(!ok) {std::cerr<<message<<std::endl;std::exit(1);}};
  const bool feedback = argc > 2 && QString::fromLocal8Bit(argv[2]) == "--audio-feedback";
  bool validCount=true;
- const int expectedPackets=argc>3?QString::fromLocal8Bit(argv[3]).toInt(&validCount):13;
+ const int expectedPackets=feedback&&argc>3?QString::fromLocal8Bit(argv[3]).toInt(&validCount):13;
  check(validCount && expectedPackets>=1 && expectedPackets<=64,"Invalid expected Busy packet count");
  Client a,b,observer;
  check(login(a,port,"DockerAlice",password),"TCP/TLS login A failed");
  check(login(b,port,"DockerBob",password),"TCP/TLS login B failed");
  check(login(observer,port,"DockerObserver",password),"TCP/TLS observer login failed");
+ if(argc>2 && QString::fromLocal8Bit(argv[2])=="--analog-forwarding") {
+  analogForwarding(a,b,observer,argc>3?argv[3]:"cb-am");return 0;
+ }
  if(argc>2 && QString::fromLocal8Bit(argv[2])=="--cb-defaults") {radioNoise(a,b,observer,true);return 0;}
  if(argc>2 && QString::fromLocal8Bit(argv[2])=="--radio-noise") {radioNoise(a,b,observer);return 0;}
  if(argc>2 && (QString::fromLocal8Bit(argv[2])=="--audio-defaults" || QString::fromLocal8Bit(argv[2])=="--audio-defaults-muted")) {

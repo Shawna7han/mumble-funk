@@ -1,5 +1,9 @@
 # B6B-Übergabe: reale Hör- und Leistungsabnahme noch offen
 
+**Aktueller Nachtrag:** B6B wurde inzwischen zur kritischen Fehleranalyse
+beauftragt. [Untersuchung und tatsächliche Ergebnisse](analog-voice-b6b.md).
+Der folgende Text ist die historische B6A-Übergabe; die Praxisfreigabe bleibt offen.
+
 B6A stabilisiert die vorhandene Architektur und bereitet den expliziten
 `--experimental-analog-voice`-Installer für `feature/analog-voice-live` vor.
 [Technische Abnahme](analog-voice-b6a.md) und
