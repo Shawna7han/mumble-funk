@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -57,7 +58,8 @@ struct Control {
 	bool block = false, entered = false, released = false;
 	std::atomic< int > calls{ 0 }, resets{ 0 }, failAt{ 0 };
 	std::atomic< std::uint64_t > floor{ 0 };
-	bool fullBatch = false;
+	bool fullBatch      = false;
+	bool invalidSources = false, failBegin = false;
 	void pause() {
 		std::unique_lock< std::mutex > lock(mutex);
 		entered = true;
@@ -84,6 +86,10 @@ class Fake final : public Service::Processor {
 public:
 	explicit Fake(Control &control) : m_control(control) {}
 	bool begin(std::uint64_t frame, std::uint64_t floor) noexcept override {
+		if (m_control.failBegin) {
+			m_state = Stream::State::Faulted;
+			return false;
+		}
 		m_control.floor = floor;
 		m_frame         = std::max({ frame, floor, m_frame });
 		m_state         = Stream::State::Active;
@@ -106,7 +112,8 @@ public:
 			m_frame += 2;
 			packet.bytes = input.bytes;
 			std::copy_n(input.payload, input.bytes, packet.payload.begin());
-			packet.spans[0]  = { Stream::Origin::Source, input.frame, 0, 0, 960 };
+			packet.spans[0]  = { Stream::Origin::Source, input.frame + (m_control.invalidSources ? 1000 : 0), 0, 0,
+                                960 };
 			packet.spanCount = 1;
 		}
 		if (input.end) {
@@ -304,7 +311,7 @@ void admissionBounds() {
 	CHECK(s.submit(h, malformed).status == Service::Admission::Invalid);
 	accepted(s, h, input(0, false));
 	f.controls[0].wait();
-	// Media-time capacity is independent of the four-packet bound (60+60+20 ms).
+	// Media-time capacity is independent of the packet bound (60+60+20 ms).
 	const std::array< unsigned char, 3 > sixty{ { 0x18, 0xff, 0xfe } };
 	malformed         = input(2, false);
 	malformed.payload = sixty.data();
@@ -376,11 +383,12 @@ void fullInputAndControls(bool overflow) {
 	const auto h = s.open(a);
 	accepted(s, h, input(0, false));
 	f.controls[0].wait();
-	for (int i = 1; i <= 4; ++i) {
+	constexpr int queued = Service::InputSamples / 960;
+	for (int i = 1; i <= queued; ++i) {
 		accepted(s, h, input(i * 2, false));
 	}
 	if (overflow) {
-		CHECK(s.submit(h, input(10, true)).status == Service::Admission::InputFull);
+		CHECK(s.submit(h, input((queued + 1) * 2, true)).status == Service::Admission::InputFull);
 		f.controls[0].release();
 		const auto batch = f.next();
 		CHECK(batch.terminal);
@@ -392,7 +400,7 @@ void fullInputAndControls(bool overflow) {
 		CHECK(s.finish(h).status == Service::Admission::Accepted);
 		CHECK(s.finish(h).status == Service::Admission::Closed);
 		f.controls[0].release();
-		for (int i = 0; i < 5; ++i) {
+		for (int i = 0; i < queued + 1; ++i) {
 			CHECK(!f.next().terminal);
 		}
 		const auto batch = f.next();
@@ -428,6 +436,9 @@ void faultLatch() {
 	accepted(s, h, input(2, false));
 	const auto failed = f.next();
 	CHECK(failed.failure == Service::Failure::Codec);
+	CHECK(failed.codecFailure == Service::CodecFailure::Stream);
+	CHECK(failed.audio.error == Stream::Error::Encoder);
+	CHECK(s.statistics().codecStream == 1);
 	CHECK(!failed.bypass);
 	CHECK(s.submit(h, input(4, false)).status == Service::Admission::Faulted);
 	CHECK(s.finish(h).status == Service::Admission::Accepted);
@@ -576,10 +587,11 @@ void realFaultReserve(bool expiredOutput) {
 	if (expiredOutput) {
 		milliseconds = 41;
 	} else {
-		for (int i = 1; i <= 4; ++i) {
+		constexpr int queued = Service::InputSamples / 960;
+		for (int i = 1; i <= queued; ++i) {
 			accepted(s, h, input(i * 2, false, receiver));
 		}
-		CHECK(s.submit(h, input(10, false, receiver)).status == Service::Admission::InputFull);
+		CHECK(s.submit(h, input((queued + 1) * 2, false, receiver)).status == Service::Admission::InputFull);
 	}
 	const auto fault = events.next(s);
 	CHECK(fault.failure == (expiredOutput ? Service::Failure::Expired : Service::Failure::InputFull));
@@ -592,6 +604,187 @@ void realFaultReserve(bool expiredOutput) {
 	const auto end = events.next(s);
 	CHECK(end.terminal);
 	CHECK(end.audio.count == 0);
+}
+// Keep the first result unconsumed, as happens while a TCP readyRead callback
+// drains buffered messages. The worker cannot free another input place then.
+// Freeze only the injected job clock: this is a capacity test, not an expiry test.
+void realBurstBudget() {
+	for (bool previousGeneration : { false, true }) {
+		for (int samples : { 960, 480, 1920, 2880, 5760 }) {
+			Events events;
+			Service s(
+				funkvoice::profile("cb-am"), [&] { events.wake(); }, [] { return Service::Time{}; });
+			const auto sender = s.connect(1, 1, 1), receiver = s.connect(2, 2, 1);
+			auto handle                  = s.open(sender);
+			const auto initialGeneration = handle.generation;
+			const auto payload           = encode(samples);
+			auto packet                  = input(0, false, receiver);
+			packet.payload               = payload.data();
+			packet.bytes                 = payload.size();
+			packet.samples               = samples;
+			packet.end                   = previousGeneration;
+			accepted(s, handle, packet);
+			{
+				std::unique_lock< std::mutex > lock(events.mutex);
+				CHECK(events.changed.wait_for(lock, std::chrono::seconds(5), [&] { return events.count == 1; }));
+			}
+			if (previousGeneration) {
+				handle = s.open(sender);
+				CHECK(bool(handle));
+			}
+			packet.end       = false;
+			const int queued = Service::InputSamples / samples;
+			for (int i = 1; i <= queued; ++i) {
+				packet.frame       = std::uint64_t(i * samples / 480);
+				const auto receipt = s.submit(handle, packet);
+				if (receipt.status != Service::Admission::Accepted)
+					std::cerr << "burst admission failed: samples=" << samples << " queued=" << i
+							  << " inputFull=" << s.statistics().inputFull << '\n';
+				CHECK(receipt.status == Service::Admission::Accepted);
+				CHECK(receipt.queuedPackets == std::uint32_t(i));
+				CHECK(receipt.queuedSamples == std::uint32_t(i * samples));
+			}
+			packet.frame += samples / 480;
+			packet.payload = nullptr;
+			packet.bytes   = 0;
+			packet.samples = 0;
+			packet.end     = true;
+			accepted(s, handle, packet); // Reserved room for a confirmed empty terminator.
+			int error            = OPUS_OK;
+			OpusDecoder *decoder = opus_decoder_create(48000, 1, &error);
+			CHECK(error == OPUS_OK);
+			std::size_t output = 0;
+			bool terminal      = false;
+			std::uint64_t last = 0;
+			for (int i = 0; i < queued + 2; ++i) {
+				const auto batch = events.next(s);
+				CHECK(batch.failure == Service::Failure::None && !batch.bypass);
+				CHECK(batch.recipients.count == 1 && batch.recipients.identities[0] == receiver);
+				for (std::size_t p = 0; p < batch.audio.count; ++p) {
+					const auto &out = batch.audio.packets[p];
+					CHECK(!output || out.frame > last);
+					last = out.frame;
+					++output;
+					float pcm[960];
+					CHECK(opus_decode_float(decoder, out.payload.data(), out.bytes, pcm, 960, 0) == 960);
+					for (std::size_t j = 0; j < batch.sourceCounts[p]; ++j)
+						CHECK(batch.sources[p][j].generation == (i == 0 ? initialGeneration : handle.generation));
+					terminal = out.end == Stream::End::InputMarker;
+				}
+				CHECK(batch.terminal == (i == queued + 1 || (previousGeneration && i == 0)));
+				if (batch.terminal)
+					CHECK(opus_decoder_ctl(decoder, OPUS_RESET_STATE) == OPUS_OK);
+			}
+			opus_decoder_destroy(decoder);
+			CHECK(output > 0 && terminal);
+			CHECK(s.statistics().inputFull == 0 && s.statistics().codecErrors == 0);
+			CHECK(s.statistics().peakInputSamples == Service::InputSamples);
+		}
+	}
+}
+void faultedBurstRecovery(bool marker) {
+	Fixture f(true);
+	Service &s        = *f.service;
+	const auto sender = s.connect(1, 1, 1), nextSender = s.connect(2, 2, 1);
+	const auto old = s.open(sender);
+	accepted(s, old, input(0, false));
+	f.controls[0].wait();
+	constexpr int queued = Service::InputSamples / 960;
+	for (int i = 1; i <= queued; ++i)
+		accepted(s, old, input(i * 2, false));
+	const auto full = s.submit(old, input((queued + 1) * 2, false));
+	CHECK(full.status == Service::Admission::InputFull);
+	CHECK(full.queuedPackets == queued && full.queuedSamples == Service::InputSamples);
+	for (int i = queued + 2; i < queued + 5; ++i)
+		CHECK(s.submit(old, input(i * 2, false)).status == Service::Admission::Faulted);
+	CHECK(!s.open(nextSender)); // Reporting a fault is not a channel boundary.
+	if (marker)
+		CHECK(s.submit(old, input(30, true)).status == Service::Admission::Faulted);
+	else
+		CHECK(s.finish(old, 30).status == Service::Admission::Accepted);
+	const auto fresh = s.open(nextSender);
+	CHECK(bool(fresh));
+	accepted(s, fresh, input(100, true));
+	Service::Batch pending;
+	CHECK(!s.take(pending)); // No successor can cross the old generation's barrier.
+	f.controls[0].release();
+	const auto end = f.next();
+	CHECK(end.terminal && end.failure == Service::Failure::InputFull && end.audio.count == 0);
+	CHECK(end.completed.technical != marker);
+	const auto next = f.next();
+	CHECK(next.completed.generation == fresh.generation && next.terminal && !next.bypass);
+	CHECK(next.failure == Service::Failure::None);
+	CHECK(s.statistics().inputFull == 1 && s.statistics().sampleLimitHits == 1);
+	CHECK(s.statistics().packetLimitHits == 0 && s.statistics().codecErrors == 0);
+}
+void realCodecFailureReasons() {
+	for (bool malformed : { false, true }) {
+		Events events;
+		Service s(
+			funkvoice::profile("cb-am"), [&] { events.wake(); }, [] { return Service::Time{}; });
+		const auto h = s.open(s.connect(1, 1, 1));
+		accepted(s, h, input(0, false));
+		events.next(s); // Establish real encoded state, independently of output delivery.
+		auto packet                   = input(1, false); // Advancing but overlapping source frame -> Ignored.
+		const unsigned char invalid[] = { 0xfa, 0xff };  // Header duration is valid; packet_parse fails.
+		if (malformed) {
+			packet.frame   = 2;
+			packet.payload = invalid;
+			packet.bytes   = sizeof(invalid);
+			packet.samples = 1920;
+		}
+		accepted(s, h, packet);
+		const auto batch = events.next(s);
+		CHECK(batch.failure == Service::Failure::Codec && !batch.bypass);
+		CHECK(batch.codecFailure == (malformed ? Service::CodecFailure::Stream : Service::CodecFailure::Ignored));
+		CHECK(batch.audio.error == (malformed ? Stream::Error::InvalidPayload : Stream::Error::None));
+		CHECK(batch.audio.codecError == (malformed ? OPUS_INVALID_PACKET : OPUS_OK));
+		CHECK(s.statistics().codecStream == std::uint64_t(malformed));
+		CHECK(s.statistics().codecIgnored == std::uint64_t(!malformed));
+		CHECK(s.statistics().inputFull == 0 && s.statistics().codecErrors == 1);
+		CHECK(s.submit(h, input(10, false)).status == Service::Admission::Faulted);
+		CHECK(s.finish(h).status == Service::Admission::Accepted);
+		CHECK(events.next(s).terminal);
+	}
+}
+void packetCapacityBound() {
+	Fixture f(true);
+	Service &s   = *f.service;
+	const auto h = s.open(s.connect(1, 1, 1));
+	accepted(s, h, input(0, false));
+	f.controls[0].wait();
+	const auto payload = encode(240);
+	auto packet        = input(2, false);
+	packet.payload     = payload.data();
+	packet.bytes       = payload.size();
+	packet.samples     = 240;
+	for (std::size_t i = 0; i < Service::InputPackets; ++i) {
+		packet.frame = i + 2;
+		accepted(s, h, packet);
+	}
+	packet.frame    = 100;
+	const auto full = s.submit(h, packet);
+	CHECK(full.status == Service::Admission::InputFull && full.queuedPackets == Service::InputPackets);
+	CHECK(full.queuedSamples < Service::InputSamples);
+	CHECK(s.statistics().packetLimitHits == 1 && s.statistics().sampleLimitHits == 0);
+	CHECK(s.finish(h).status == Service::Admission::Accepted);
+	f.controls[0].release();
+	CHECK(f.next().terminal && s.statistics().codecErrors == 0);
+}
+void internalCodecFailureReasons() {
+	for (bool begin : { false, true }) {
+		Fixture f;
+		f.controls[0].failBegin      = begin;
+		f.controls[0].invalidSources = !begin;
+		Service &s                   = *f.service;
+		const auto h                 = s.open(s.connect(1, 1, 1));
+		accepted(s, h, input(0, true));
+		const auto batch = f.next();
+		CHECK(batch.failure == Service::Failure::Codec && batch.audio.count == 0);
+		CHECK(batch.codecFailure == (begin ? Service::CodecFailure::Begin : Service::CodecFailure::SourceMap));
+		CHECK(s.statistics().codecBegin == std::uint64_t(begin));
+		CHECK(s.statistics().codecSourceMap == std::uint64_t(!begin));
+	}
 }
 void realCodec() {
 	Events events;
@@ -720,7 +913,11 @@ void simplexHandoff() {
 }
 #endif
 } // namespace
-int main() {
+int main(int argc, char **argv) {
+	if (argc == 2 && std::string(argv[1]) == "--burst-only") {
+		realBurstBudget();
+		return 0;
+	}
 #ifdef VOICE_TEST_SIMPLEX
 	simplexHandoff();
 #endif
@@ -745,6 +942,12 @@ int main() {
 	shutdownAndRestart();
 	concurrentProducers();
 	realCodec();
+	realBurstBudget();
+	faultedBurstRecovery(false);
+	faultedBurstRecovery(true);
+	realCodecFailureReasons();
+	packetCapacityBound();
+	internalCodecFailureReasons();
 	realFaultReserve(false);
 	realFaultReserve(true);
 	std::cout << "fixed service bytes=" << Service::fixedStorageBytes() << ", batch bytes=" << sizeof(Service::Batch)

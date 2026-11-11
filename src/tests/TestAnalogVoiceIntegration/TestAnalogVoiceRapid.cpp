@@ -96,7 +96,7 @@ void TestAnalogVoiceRapid::bursts() {
 		for (int p = 0; p < packets; ++p) {
 			QVERIFY(sendAudio(sender, payload, first + std::uint64_t(p * samples / 480), marker && p + 1 == packets, udp));
 			++submitted;
-			collect(samples / 48); // Real media cadence; do not burst-fill the four-job queue.
+			collect(samples / 48); // Media-cadence comparison; TestAnalogVoiceBurst covers coalesced arrivals.
 		}
 		collect(pauses[std::size_t(burst) % pauses.size()]);
 		for (std::size_t r = 0; r < (multiple ? 2U : 1U); ++r) {

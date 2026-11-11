@@ -40,6 +40,10 @@ namespace {
 		return std::find(set.identities.begin(), set.identities.begin() + set.count, identity)
 			   != set.identities.begin() + set.count;
 	}
+	std::uint64_t ageUs(Service::Time now, Service::Time accepted) {
+		return static_cast<std::uint64_t>(std::max<std::int64_t>(0,
+			std::chrono::duration_cast<std::chrono::microseconds>(now - accepted).count()));
+	}
 	void intersect(Service::Recipients &set, const Service::Recipients &other) {
 		std::size_t count = 0;
 		for (std::size_t i = 0; i < set.count; ++i) {
@@ -87,7 +91,9 @@ struct AnalogVoiceService::Impl {
 		// most recent source records cover this even for 10-ms input packets.
 		std::array< Ticket, 8 > history{};
 		std::size_t historyNext = 0;
-		std::array< Job, InputPackets > originals{};
+		// Pre-encode fallback retains only the existing half/lookahead/reserve
+		// window. Input burst capacity must not enlarge this separate buffer.
+		std::array< Job, 4 > originals{};
 		std::size_t originalCount = 0;
 	};
 	mutable std::mutex mutex;
@@ -255,6 +261,7 @@ struct AnalogVoiceService::Impl {
 				if (!found) {
 					batch.audio.count = 0;
 					batch.failure     = Failure::Sequence;
+					batch.codecFailure = CodecFailure::SourceMap;
 					return;
 				}
 			}
@@ -281,6 +288,7 @@ struct AnalogVoiceService::Impl {
 				}
 			}
 			if (selected == MaxTransmissions) {
+				++stats.workerWaits;
 				changed.wait(lock);
 				continue;
 			}
@@ -330,7 +338,9 @@ struct AnalogVoiceService::Impl {
 			} else {
 				job = entry.end;
 			}
-			if (clock() - job.ticket.accepted > std::chrono::milliseconds(40)) {
+			const auto startedAt = clock();
+			stats.maxWorkerStartAgeUs = std::max(stats.maxWorkerStartAgeUs, ageUs(startedAt, job.ticket.accepted));
+			if (startedAt - job.ticket.accepted > std::chrono::milliseconds(40)) {
 				++stats.expired;
 				if (!entry.closing) {
 					entry.end = job;
@@ -371,6 +381,7 @@ struct AnalogVoiceService::Impl {
 				Processor &codec = *codecs[slot];
 				if (begin && !codec.begin(job.ticket.sourceFrame, floor)) {
 					output.failure = Failure::Codec;
+					output.codecFailure = CodecFailure::Begin;
 				} else {
 					const std::uint64_t before = codec.nextOutputFrame();
 					if (job.ticket.technical) {
@@ -400,11 +411,13 @@ struct AnalogVoiceService::Impl {
 			if (job.bytes && output.audio.disposition == Stream::Disposition::Accepted) {
 				entry.history[entry.historyNext++ % entry.history.size()] = job.ticket;
 			}
+			const auto finishedAt = clock();
+			stats.maxWorkerFinishAgeUs = std::max(stats.maxWorkerFinishAgeUs, ageUs(finishedAt, job.ticket.accepted));
 			if (stopping || entry.cancelled || entry.failure != Failure::None) {
 				++stats.staleResults;
 				continue;
 			}
-			if (clock() - job.ticket.accepted > std::chrono::milliseconds(40)) {
+			if (finishedAt - job.ticket.accepted > std::chrono::milliseconds(40)) {
 				++stats.expired;
 				if (!entry.closing) {
 					entry.end = job;
@@ -426,11 +439,21 @@ struct AnalogVoiceService::Impl {
 				if (state == Stream::State::Faulted || output.failure != Failure::None
 					|| output.audio.disposition == Stream::Disposition::Ignored) {
 					++stats.codecErrors;
+					if (output.codecFailure == CodecFailure::None)
+						output.codecFailure = output.audio.disposition == Stream::Disposition::Ignored
+							? CodecFailure::Ignored : CodecFailure::Stream;
+					switch (output.codecFailure) {
+						case CodecFailure::Begin: ++stats.codecBegin; break;
+						case CodecFailure::Stream: ++stats.codecStream; break;
+						case CodecFailure::Ignored: ++stats.codecIgnored; break;
+						case CodecFailure::SourceMap: ++stats.codecSourceMap; break;
+						case CodecFailure::None: break;
+					}
 					fault(entry, Failure::Codec);
 					output.failure      = Failure::Codec;
 					entry.faultReported = true;
 				} else if (!entry.encoded && output.audio.count == 0 && job.bytes
-						   && entry.originalCount < InputPackets) {
+						   && entry.originalCount < entry.originals.size()) {
 					entry.originals[entry.originalCount++] = job;
 				} else {
 					entry.originalCount = 0;
@@ -633,11 +656,15 @@ AnalogVoiceService::Receipt AnalogVoiceService::submit(Handle handle, const Inpu
 	}
 	if (entry->count == InputPackets || entry->samples + input.samples > InputSamples) {
 		++impl.stats.inputFull;
+		impl.stats.packetLimitHits += entry->count == InputPackets;
+		impl.stats.sampleLimitHits += entry->samples + input.samples > InputSamples;
+		const auto queuedPackets = static_cast<std::uint32_t>(entry->count);
+		const auto queuedSamples = entry->samples;
 		if (!entry->closing) {
 			entry->end = job;
 		}
 		impl.fault(*entry, Failure::InputFull);
-		return { Admission::InputFull, job.ticket };
+		return { Admission::InputFull, job.ticket, queuedPackets, queuedSamples };
 	}
 	job.bytes      = input.bytes;
 	job.recipients = input.recipients;
@@ -653,9 +680,11 @@ AnalogVoiceService::Receipt AnalogVoiceService::submit(Handle handle, const Inpu
 	entry->queue[(entry->head + entry->count) % InputPackets] = job;
 	++entry->count;
 	entry->samples += input.samples;
+	impl.stats.peakInputPackets = std::max<std::uint64_t>(impl.stats.peakInputPackets, entry->count);
+	impl.stats.peakInputSamples = std::max<std::uint64_t>(impl.stats.peakInputSamples, entry->samples);
 	++impl.stats.accepted;
 	impl.changed.notify_one();
-	return { Admission::Accepted, job.ticket };
+	return { Admission::Accepted, job.ticket, static_cast<std::uint32_t>(entry->count), entry->samples };
 }
 AnalogVoiceService::Receipt AnalogVoiceService::finish(Handle handle, std::uint64_t lastSourceFrame, Time endedAt) {
 	Impl &impl = *m_impl;
@@ -711,8 +740,11 @@ bool AnalogVoiceService::take(Batch &batch) {
 			impl.abort(entry);
 			continue;
 		}
+		const auto takenAt = impl.clock();
+		if (entry.output.failure == Failure::None)
+			impl.stats.maxTakeAgeUs = std::max(impl.stats.maxTakeAgeUs, ageUs(takenAt, entry.output.completed.accepted));
 		if (entry.output.failure == Failure::None
-			&& impl.clock() - entry.output.completed.accepted > std::chrono::milliseconds(40)) {
+			&& takenAt - entry.output.completed.accepted > std::chrono::milliseconds(40)) {
 			++impl.stats.expired;
 			if (!entry.closing) {
 				entry.end.ticket = entry.output.completed;

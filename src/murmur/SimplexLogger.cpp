@@ -116,6 +116,15 @@ void SimplexLogger::run() {
 				object.insert(QStringLiteral("output_packets"), int(event.analogOutputs));
 				object.insert(QStringLiteral("recipients"), int(event.analogRecipients));
 				object.insert(QStringLiteral("local_handoffs"), int(event.analogHandoffs));
+				if (event.analogQueueKnown) {
+					object.insert(QStringLiteral("queued_packets"), int(event.analogQueuedPackets));
+					object.insert(QStringLiteral("queued_samples"), int(event.analogQueuedSamples));
+				}
+				if (!event.analogCodecStage.isEmpty()) {
+					object.insert(QStringLiteral("codec_stage"), event.analogCodecStage);
+					object.insert(QStringLiteral("stream_error"), event.analogStreamError);
+					object.insert(QStringLiteral("codec_error"), event.analogCodecError);
+				}
 				if (event.event == QLatin1String("analog_handoff"))
 					object.insert(QStringLiteral("output_frame"), QString::number(event.analogOutputFrame));
 			}

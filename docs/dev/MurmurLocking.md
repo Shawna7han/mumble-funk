@@ -327,6 +327,12 @@ context alive until join returns. See [B3](../funk/analog-voice-b3.md) and the
 ### Experimental Server integration (B4)
 
 B6B adds optional `analog_*` pipeline records to the existing SimplexLogger.
+B6C adds fixed queue snapshots and codec-cause fields to those same records,
+plus aggregate queue high-water/job-age counters under the existing service
+mutex. The packet array derives from the unchanged 5760-sample budget and the
+smallest supported 480-sample input, plus an empty terminator; the separate
+four-job pre-encode reserve is unchanged. Result backpressure, lock order,
+notification coalescing and the 40-ms job-age checks are unchanged.
 They use its bounded try-lock queue under the already-held Simplex/voice guard;
 the dispatcher emits records only after the service mutex has been released.
 No audio content, synchronous disk IO, worker-to-server callbacks or new event

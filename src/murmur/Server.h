@@ -135,7 +135,8 @@ protected:
 	void deliverAnalogVoice();
 	void recordAnalogVoice(const char *stage, const char *reason, const funkvoice::AnalogVoiceService::Ticket &ticket,
 		std::size_t outputs = 0, std::size_t recipients = 0, std::size_t handoffs = 0, bool udp = false,
-		std::uint64_t outputFrame = 0);
+		std::uint64_t outputFrame = 0, const funkvoice::AnalogVoiceService::Receipt *admission = nullptr,
+		const funkvoice::AnalogVoiceService::Batch *result = nullptr);
 	std::uint64_t m_analogHandoffPackets = 0, m_analogHandoffRecipients = 0;
 	std::uint64_t m_analogSenderRejected = 0, m_analogNoRecipients = 0, m_analogTransportDropped = 0;
 	AnalogVoiceLifecycle m_analogLifecycle;

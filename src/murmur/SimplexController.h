@@ -40,6 +40,10 @@ public:
 		std::uint64_t analogOutputFrame = 0;
 		std::uint32_t analogSamples = 0;
 		std::size_t analogOutputs = 0, analogRecipients = 0, analogHandoffs = 0;
+		std::uint32_t analogQueuedPackets = 0, analogQueuedSamples = 0;
+		bool analogQueueKnown = false;
+		QString analogCodecStage, analogStreamError;
+		int analogCodecError = 0;
 	};
 	using Clock = std::function< std::int64_t() >;
 	using Sink  = std::function< void(const Event &) >;

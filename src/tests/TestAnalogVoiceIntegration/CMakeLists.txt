@@ -40,3 +40,15 @@ endif()
 add_test(NAME TestAnalogVoiceRapid COMMAND $<TARGET_FILE:TestAnalogVoiceRapid>)
 # 18 cases include 10/50 bursts with intentional 50..500-ms PTT pauses.
 set_tests_properties(TestAnalogVoiceRapid PROPERTIES TIMEOUT 240)
+
+add_executable(TestAnalogVoiceBurst TestAnalogVoiceBurst.cpp)
+set_target_properties(TestAnalogVoiceBurst PROPERTIES AUTOMOC ON RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+target_link_libraries(TestAnalogVoiceBurst PRIVATE shared Qt5::Test funk-voice-service)
+target_compile_definitions(TestAnalogVoiceBurst PRIVATE B4_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/audio" MUMBLE_SERVER_PATH="$<TARGET_FILE:mumble-server>")
+add_dependencies(TestAnalogVoiceBurst mumble-server)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_definitions(TestAnalogVoiceBurst PRIVATE MUMBLE_TEST_VOICE_GATE_AVAILABLE)
+endif()
+add_test(NAME TestAnalogVoiceBurst COMMAND $<TARGET_FILE:TestAnalogVoiceBurst>)
+# Includes intentional 50..1000-ms pauses and explicit timeout-only boundaries.
+set_tests_properties(TestAnalogVoiceBurst PROPERTIES TIMEOUT 180)

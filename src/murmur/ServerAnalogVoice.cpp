@@ -39,10 +39,37 @@ const char *failureName(Service::Failure failure) {
 	}
 	return "unknown";
 }
+const char *codecStageName(Service::CodecFailure failure) {
+	switch (failure) {
+		case Service::CodecFailure::None: return "none";
+		case Service::CodecFailure::Begin: return "begin";
+		case Service::CodecFailure::Stream: return "stream";
+		case Service::CodecFailure::Ignored: return "ignored";
+		case Service::CodecFailure::SourceMap: return "source_map";
+	}
+	return "unknown";
+}
+const char *streamErrorName(Stream::Error error) {
+	switch (error) {
+		case Stream::Error::None: return "none";
+		case Stream::Error::InvalidState: return "invalid_state";
+		case Stream::Error::InvalidPayload: return "invalid_payload";
+		case Stream::Error::UnsupportedChannels: return "unsupported_channels";
+		case Stream::Error::UnsupportedDuration: return "unsupported_duration";
+		case Stream::Error::SequenceOverflow: return "sequence_overflow";
+		case Stream::Error::Decoder: return "decoder";
+		case Stream::Error::Processor: return "processor";
+		case Stream::Error::Encoder: return "encoder";
+		case Stream::Error::Capacity: return "capacity";
+		case Stream::Error::Aborted: return "aborted";
+	}
+	return "unknown";
+}
 } // namespace
 
 void Server::recordAnalogVoice(const char *stage, const char *reason, const Service::Ticket &ticket,
-	std::size_t outputs, std::size_t recipients, std::size_t handoffs, bool udp, std::uint64_t outputFrame) {
+	std::size_t outputs, std::size_t recipients, std::size_t handoffs, bool udp, std::uint64_t outputFrame,
+	const Service::Receipt *admission, const Service::Batch *result) {
 	if (!m_simplexLogger)
 		return;
 	SimplexController::Event event;
@@ -62,6 +89,16 @@ void Server::recordAnalogVoice(const char *stage, const char *reason, const Serv
 	event.analogRecipients = recipients;
 	event.analogHandoffs = handoffs;
 	event.analogOutputFrame = outputFrame;
+	if (admission && (admission->status == Service::Admission::Accepted || admission->status == Service::Admission::InputFull)) {
+		event.analogQueueKnown = true;
+		event.analogQueuedPackets = admission->queuedPackets;
+		event.analogQueuedSamples = admission->queuedSamples;
+	}
+	if (result) {
+		event.analogCodecStage = QString::fromLatin1(codecStageName(result->codecFailure));
+		event.analogStreamError = QString::fromLatin1(streamErrorName(result->audio.error));
+		event.analogCodecError = result->audio.codecError;
+	}
 	// Existing bounded, try-lock queue; no disk IO, user pointer or payload.
 	m_simplexLogger->submit(event);
 }
@@ -115,6 +152,12 @@ void Server::shutdownAnalogVoice() {
 				.arg(stats.processedJobs).arg(stats.publishedPackets).arg(stats.takenPackets)
 				.arg(m_analogHandoffPackets).arg(m_analogHandoffRecipients).arg(m_analogSenderRejected)
 				.arg(m_analogNoRecipients).arg(m_analogTransportDropped));
+		log(QStringLiteral("Analog voice detail: packetLimitHits=%1 sampleLimitHits=%2 peakInputPackets=%3 "
+			"peakInputSamples=%4 workerWaits=%5 maxWorkerStartAgeUs=%6 maxWorkerFinishAgeUs=%7 "
+			"maxTakeAgeUs=%8 codecBegin=%9 codecStream=%10 codecIgnored=%11 codecSourceMap=%12")
+			.arg(stats.packetLimitHits).arg(stats.sampleLimitHits).arg(stats.peakInputPackets).arg(stats.peakInputSamples)
+			.arg(stats.workerWaits).arg(stats.maxWorkerStartAgeUs).arg(stats.maxWorkerFinishAgeUs).arg(stats.maxTakeAgeUs)
+			.arg(stats.codecBegin).arg(stats.codecStream).arg(stats.codecIgnored).arg(stats.codecSourceMap));
 		m_analogVoice.reset();
 		--analogServers;
 	}
@@ -229,7 +272,7 @@ void Server::submitAnalogVoice(ServerUser &user, const Mumble::Protocol::AudioDa
 	}
 	const auto receipt = m_analogVoice->submit(entry->handle, input);
 	recordAnalogVoice("analog_submit", admissionName(receipt.status),
-		receipt.ticket.channelTicket ? receipt.ticket : context, 0, input.recipients.count, 0, udp);
+		receipt.ticket.channelTicket ? receipt.ticket : context, 0, input.recipients.count, 0, udp, 0, &receipt);
 	if (receipt.status == Service::Admission::Invalid || receipt.status == Service::Admission::Stale
 		|| receipt.status == Service::Admission::Stopped || receipt.status == Service::Admission::Closed) {
 		m_analogVoice->cancel(entry->handle);
@@ -255,7 +298,8 @@ void Server::deliverAnalogVoice() {
 	AudioReceiverBuffer receivers;
 	Mumble::Protocol::UDPAudioEncoder< Mumble::Protocol::Role::Server > encoder;
 	while (m_analogVoice->take(batch)) {
-		recordAnalogVoice("analog_result", failureName(batch.failure), batch.completed, batch.audio.count, batch.recipients.count);
+		recordAnalogVoice("analog_result", failureName(batch.failure), batch.completed, batch.audio.count,
+			batch.recipients.count, 0, false, 0, nullptr, &batch);
 		auto *sender = qhUsers.value(batch.completed.sender.session, nullptr);
 		if (!sender || !(sender->analogIdentity == batch.completed.sender)
 			|| sender->sState != ServerUser::Authenticated || !sender->cChannel || sender->bMute || sender->bSuppress

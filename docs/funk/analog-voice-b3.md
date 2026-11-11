@@ -1,5 +1,8 @@
 # Analoge Sprachfilter: B3 – asynchroner Dienst und geordnete Tickets
 
+Historischer B3-Stand: Die aktuelle, aus dem unveränderten 120-ms-Samplebudget
+hergeleitete Paketkapazität und Ressourcenanalyse beschreibt [B6C](analog-voice-b6c.md).
+
 Stand: 7. November 2026. Branch `feature/analog-voice-live`, Ausgangspunkt
 `21717037e6f5dfcf21177dc4f56f08eb72e43ae9` (B2-Übergabe), fortbestehender
 [Draft-PR #15](https://github.com/Shawna7han/mumble-funk/pull/15) gegen `dev`.

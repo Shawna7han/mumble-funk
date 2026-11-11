@@ -19,8 +19,11 @@ public:
 	static constexpr std::size_t MaxTransmissions = 16;
 	static constexpr std::size_t MaxConnections   = 128;
 	static constexpr std::size_t MaxRecipients    = 64;
-	static constexpr std::size_t InputPackets     = 4;
 	static constexpr std::uint32_t InputSamples   = 5760;
+	// The existing 120-ms media budget must also fit its smallest supported
+	// (10-ms) packets, plus one empty confirmed terminator. This is a bounded
+	// burst envelope, not permission to exceed the unchanged 40-ms job age.
+	static constexpr std::size_t InputPackets     = InputSamples / (FrameSamples / 2) + 1;
 	using Time                                    = std::chrono::steady_clock::time_point;
 	using Clock                                   = std::function< Time() >;
 	// Must not throw; only enqueue a wakeup, never dispatch inline or wait for the main thread.
@@ -69,9 +72,12 @@ public:
 	};
 	enum class Admission { Accepted, Stopped, Stale, Invalid, InputFull, Faulted, Closed };
 	enum class Failure { None, InputFull, Expired, Codec, Sequence };
+	enum class CodecFailure { None, Begin, Stream, Ignored, SourceMap };
 	struct Receipt {
 		Admission status = Admission::Invalid;
 		Ticket ticket;
+		// Snapshot before an overflow faults/clears the queue, otherwise after admission.
+		std::uint32_t queuedPackets = 0, queuedSamples = 0;
 	};
 	struct Batch {
 		Handle handle; // Stable lane/generation for bounded dispatcher lifecycle state.
@@ -83,6 +89,7 @@ public:
 		std::array< std::array< Ticket, AnalogVoiceStream::MaxSpans >, AnalogVoiceStream::MaxOutputPackets > sources{};
 		std::array< std::size_t, AnalogVoiceStream::MaxOutputPackets > sourceCounts{};
 		Failure failure = Failure::None;
+		CodecFailure codecFailure = CodecFailure::None;
 		bool bypass = false, terminal = false;
 	};
 	struct Statistics {
@@ -90,6 +97,10 @@ public:
 		std::uint64_t staleResults = 0, cancelled = 0, bypassStarts = 0, noLane = 0;
 		std::uint64_t openBusy = 0, openInvalid = 0, stale = 0, invalid = 0, closed = 0, stopped = 0, faulted = 0;
 		std::uint64_t processedJobs = 0, publishedPackets = 0, takenPackets = 0;
+		std::uint64_t packetLimitHits = 0, sampleLimitHits = 0, workerWaits = 0;
+		std::uint64_t peakInputPackets = 0, peakInputSamples = 0;
+		std::uint64_t maxWorkerStartAgeUs = 0, maxWorkerFinishAgeUs = 0, maxTakeAgeUs = 0;
+		std::uint64_t codecBegin = 0, codecStream = 0, codecIgnored = 0, codecSourceMap = 0;
 	};
 
 	// Injection boundary for deterministic scheduling/fault tests. Only the worker

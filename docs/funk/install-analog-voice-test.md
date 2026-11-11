@@ -2,7 +2,8 @@
 
 Nur für die eigene Proxmox-Test-VM (Ubuntu 24.04/26.04 LTS, normaler Benutzer mit
 sudo). Experimentell, keine Produktivfreigabe. Die [B6B-Fehleranalyse](analog-voice-b6b.md)
-ersetzt keinen neuen praktischen Hörtest nach ausdrücklicher Betreiberfreigabe.
+und die [B6C-Burstkorrektur](analog-voice-b6c.md) ersetzen keinen neuen praktischen
+Hörtest nach ausdrücklicher Betreiberfreigabe.
 Diese Anleitung wurde hier nicht auf einem externen Server ausgeführt.
 
 ## Vorbereiten und Quellen wechseln
