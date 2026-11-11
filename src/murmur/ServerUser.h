@@ -12,6 +12,7 @@
 #	include "win.h"
 #endif
 
+#include "AnalogVoiceService.h"
 #include "ClientType.h"
 #include "Connection.h"
 #include "HostAddress.h"
@@ -118,6 +119,8 @@ public:
 	ClientType m_clientType;
 	// Unique within one diagnostic run, even when uiSession is reused.
 	std::uint64_t diagnosticConnection = 0;
+	funkvoice::AnalogVoiceService::Identity analogIdentity;
+	bool analogMaySend = false;
 	QString diagnosticUserName;
 	QString diagnosticChannelName;
 	operator QString() const;

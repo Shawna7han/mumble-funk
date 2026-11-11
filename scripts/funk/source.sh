@@ -14,6 +14,9 @@ funk_require_supported_source() {
     esac
     branch=$(git -C "$repo" branch --show-current)
     head=$(git -C "$repo" rev-parse HEAD)
+    if [[ $experimental == --experimental-analog-voice && $branch != feature/analog-voice-live ]]; then
+        echo "--experimental-analog-voice gilt nur für feature/analog-voice-live." >&2; return 1
+    fi
     case "$branch" in
         stable|funk-v0.1)
             upstream=$(git -C "$repo" rev-parse --verify "refs/remotes/origin/$branch^{commit}") || return 1
@@ -35,13 +38,14 @@ funk_require_supported_source() {
             }
             echo 'EXPERIMENTELL: dev-Testinstallation, keine Stable-Freigabe; Geräte-Hörtests erforderlich.' >&2
             ;;
-        feature/squelch-audio|feature/audio-volume|feature/busy-tone-asset|feature/audio-defaults|feature/radio-noise)
+        feature/squelch-audio|feature/audio-volume|feature/busy-tone-asset|feature/audio-defaults|feature/radio-noise|feature/analog-voice-live)
             local required=--experimental-squelch
             if [[ $branch == feature/audio-volume ]]; then required=--experimental-audio-volume; fi
             if [[ $branch == feature/busy-tone-asset ]]; then required=--experimental-busy-tone; fi
             if [[ $branch == feature/audio-defaults ]]; then required=--experimental-audio-defaults; fi
-            if [[ $branch == feature/radio-noise ]]; then
+            if [[ $branch == feature/radio-noise || $branch == feature/analog-voice-live ]]; then
                 required=--experimental-radio-noise
+                if [[ $branch == feature/analog-voice-live ]]; then required=--experimental-analog-voice; fi
                 # Ignored build outputs remain allowed; unpublished source files do not.
                 local untracked
                 untracked=$(git -C "$repo" ls-files --others --exclude-standard) || return 1

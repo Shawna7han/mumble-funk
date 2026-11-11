@@ -51,6 +51,8 @@ public:
 	QString radioNoiseFile;
 	int radioNoiseVolume = 20;
 	bool simplex            = false;
+	QString analogVoice        = QStringLiteral("false");
+	QString analogVoiceProfile = QStringLiteral("cb-am");
 	int simplexTimeout      = 500;
 	int simplexRetryTimeout = 1000;
 	bool simplexDiagnostics = false;

@@ -977,6 +977,8 @@ void Server::msgUserState(ServerUser *uSource, MumbleProto::UserState &msg) {
 			bBroadcast = true;
 		}
 
+		syncAnalogVoice(*pDstServerUser);
+
 		if (msg.has_plugin_context()) {
 			pDstServerUser->ssContext = msg.plugin_context();
 

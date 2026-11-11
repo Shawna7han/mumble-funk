@@ -14,6 +14,17 @@
 class TestCryptographicHash : public QObject {
 	Q_OBJECT
 private slots:
+	void ownershipCycles() {
+		for (int i = 0; i < 128; ++i)
+			for (auto algorithm : { CryptographicHash::Sha1, CryptographicHash::Sha256 }) {
+				CryptographicHash unfinished(algorithm);
+				unfinished.addData(QByteArray("unfinished"));
+				CryptographicHash finished(algorithm);
+				finished.addData(QByteArray("abc"));
+				QCOMPARE(finished.result(), CryptographicHash::hash(QByteArray("abc"), algorithm));
+			}
+	}
+
 	void initTestCase();
 	void cleanupTestCase();
 

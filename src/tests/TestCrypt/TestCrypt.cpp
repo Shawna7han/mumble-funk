@@ -15,6 +15,26 @@
 class TestCrypt : public QObject {
 	Q_OBJECT
 private slots:
+	void unalignedBuffers() {
+		for (int offset = 0; offset < 8; ++offset)
+			for (int size : { 1, 15, 16, 17, 31, 32, 127 }) {
+				CryptStateOCB2 enc, dec;
+				enc.genKey();
+				QVERIFY(dec.setKey(enc.getRawKey(), enc.getDecryptIV(), enc.getEncryptIV()));
+				QByteArray plain(size + 8, 'x'), encrypted(size + 12, 'z'), decoded(size + 8, 'y');
+				QVERIFY(enc.encrypt(reinterpret_cast< const unsigned char * >(plain.constData() + offset),
+									reinterpret_cast< unsigned char * >(encrypted.data() + offset),
+									static_cast< unsigned int >(size)));
+				QVERIFY(dec.decrypt(reinterpret_cast< const unsigned char * >(encrypted.constData() + offset),
+									reinterpret_cast< unsigned char * >(decoded.data() + offset),
+									static_cast< unsigned int >(size + 4)));
+				QCOMPARE(decoded.mid(offset, size), plain.mid(offset, size));
+				QVERIFY(!dec.decrypt(reinterpret_cast< const unsigned char * >(encrypted.constData() + offset),
+									 reinterpret_cast< unsigned char * >(decoded.data() + offset),
+									 static_cast< unsigned int >(size + 4)));
+			}
+	}
+
 	void initTestCase();
 	void cleanupTestCase();
 	void testvectors();

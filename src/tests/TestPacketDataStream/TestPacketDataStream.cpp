@@ -17,6 +17,17 @@
 class TestPacketDataStream : public QObject {
 	Q_OBJECT
 private slots:
+	void emptyAppend() {
+		PacketDataStream stream(static_cast< unsigned char * >(nullptr), 0);
+		stream.append(nullptr, 0);
+		QCOMPARE(stream.size(), quint32(0));
+		QVERIFY(stream.isValid());
+		stream.append("x", 1);
+		QVERIFY(!stream.isValid());
+		QCOMPARE(stream.undersize(), quint32(1));
+		QCOMPARE(stream.size(), quint32(0));
+	}
+
 	void integer();
 	void integer_data();
 	void string();

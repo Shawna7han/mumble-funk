@@ -393,6 +393,85 @@ class OrchestrationTests(unittest.TestCase):
             self.assertIn('EXPERIMENTELL', result.stderr)
         self.assertFalse((self.repo / 'stage').exists())
 
+    def test_analog_voice_ubuntu24_opt_in_and_update_without_private_asset(self):
+        self.env['MOCK_BRANCH'] = 'feature/analog-voice-live'
+        (self.repo / 'test-os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        for args in ((), ('--experimental-dev',), ('--experimental-squelch',)):
+            refused = self.execute(args=args)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn('--experimental-analog-voice', refused.stderr)
+            self.assertFalse((self.repo / 'stage').exists())
+            self.assertFalse(any(c[0] in ('cmake', 'apt-get', 'sudo') for c in self.calls()))
+        result = self.execute(args=('--experimental-analog-voice',))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(result.stderr.count('EXPERIMENTELL: Audio-Vorschau'), 2)
+        installers = [c for c in self.calls() if c[0] == 'sudo' and any(a.endswith('install.sh') for a in c)]
+        self.assertIn('--experimental-analog-voice', installers[-1])
+        root = self.repo / 'stage'
+        info = (root / 'opt/mumble-funk/current/BUILD-INFO').read_text()
+        self.assertIn('branch=feature/analog-voice-live\n', info)
+        self.assertIn('experimental=true\n', info)
+        config = root / 'etc/mumble-funk/server.ini'
+        self.assertIn('radionoise=true\n', config.read_text())
+        self.assertIn('analogvoice=true\n', config.read_text())
+        self.assertIn('analogvoiceprofile=cb-am\n', config.read_text())
+        self.assertEqual((root/'usr/local/share/mumble-funk/audio/radio-noise.wav').read_bytes(),
+                         (REPO/'assets/audio/radio-noise.wav').read_bytes())
+        config.write_text(config.read_text().replace('audiofeedback=true', 'audiofeedback=false')
+                          .replace('radionoise=true', 'radionoise=false')
+                          .replace('radionoisefile=/usr/local/share/mumble-funk/audio/radio-noise.wav',
+                                   'radionoisefile=/etc/mumble-funk/sounds/radio-noise.wav')
+                          .replace('radionoisevolume=20', 'radionoisevolume=10'))
+        database = root / 'var/lib/mumble-funk/server.sqlite'
+        with contextlib.closing(sqlite3.connect(database)) as db:
+            db.execute('CREATE TABLE config (server_id INTEGER, key TEXT, value TEXT)')
+            db.commit()
+        own = root / 'etc/mumble-funk/sounds/radio-noise.wav'
+        own.write_bytes(b'operator audio fixture')
+        before = {p: p.read_bytes() for p in (config, database, own)}
+        result = self.execute(args=('--experimental-analog-voice',))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes(), content, str(path))
+
+    def test_direct_analog_voice_build_and_install_require_and_forward_opt_in(self):
+        self.env['MOCK_BRANCH'] = 'feature/analog-voice-live'
+        installer = self.repo / 'scripts/funk/install.sh'
+        installer.write_text(installer.read_text()
+                             .replace('[[ $EUID == 0 ]]', 'true')
+                             .replace('. /etc/os-release', '. "$repo/test-os-release"')
+                             .replace('/run/lock/mumble-funk-install.lock', str(self.repo / 'install.lock')))
+        flock = self.repo / 'mock-bin/flock'
+        flock.write_text('#!/bin/sh\necho TEST_STOP_AFTER_SOURCE_GUARD >&2\nexit 73\n')
+        flock.chmod(0o755)
+        for name in ('build.sh', 'install.sh'):
+            command = ['bash', str(self.repo / 'scripts/funk' / name)]
+            refused = subprocess.run(command, env=self.env, capture_output=True, text=True)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn('--experimental-analog-voice', refused.stderr)
+            result = subprocess.run(command + ['--experimental-analog-voice'], env=self.env,
+                                    capture_output=True, text=True)
+            if name == 'build.sh':
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('install.sh --experimental-analog-voice', result.stdout)
+            else:
+                self.assertIn('TEST_STOP_AFTER_SOURCE_GUARD', result.stderr)
+            self.assertIn('EXPERIMENTELL', result.stderr)
+        self.assertFalse((self.repo / 'stage').exists())
+
+    def test_analog_build_failure_preserves_existing_installation(self):
+        self.env['MOCK_BRANCH']='dev'
+        result=self.execute(args=('--experimental-dev',))
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        stage=self.repo/'stage'
+        before={p.relative_to(stage):p.read_bytes() for p in stage.rglob('*') if p.is_file()}
+        self.env['MOCK_BRANCH']='feature/analog-voice-live'
+        for fail in ('build','tests'):
+            result=self.execute(fail=fail,args=('--experimental-analog-voice',))
+            self.assertNotEqual(result.returncode,0)
+            after={p.relative_to(stage):p.read_bytes() for p in stage.rglob('*') if p.is_file()}
+            self.assertEqual(after,before)
+
     def test_direct_dev_install_forwards_opt_in_to_source_guard(self):
         self.env['MOCK_BRANCH'] = 'dev'
         installer = self.repo / 'scripts/funk/install.sh'

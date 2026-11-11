@@ -16,8 +16,10 @@ SquelchPlan::SquelchPlan(bool enabled, Clock clock) : m_enabled(enabled), m_cloc
 	};
 }
 
-std::vector<SquelchPlan::Cue> SquelchPlan::observe(Identity sender, bool allowed, std::uint64_t frame,
-	bool payload, bool last, bool validOpus, const std::vector<Identity> &eligibleRecipients) {
+std::vector< SquelchPlan::Cue > SquelchPlan::observe(Identity sender, bool allowed, std::uint64_t frame, bool payload,
+													 bool last, bool validOpus,
+													 const std::vector< Identity > &eligibleRecipients,
+													 std::int64_t endedAtUs) {
 	std::vector<Cue> cues;
 	if (!m_enabled || !allowed || !sender.connection || (payload && !validOpus) || (!payload && !last))
 		return cues;
@@ -58,12 +60,18 @@ std::vector<SquelchPlan::Cue> SquelchPlan::observe(Identity sender, bool allowed
 	if (last) {
 		it->second.ended = true;
 		for (const auto &recipient : it->second.recipients)
-			cues.push_back({Kind::Close, sender, recipient.identity, it->second.generation, now});
+			cues.push_back(
+				{ Kind::Close, sender, recipient.identity, it->second.generation, endedAtUs < 0 ? now : endedAtUs });
 	}
 	return cues;
 }
 
 std::vector<SquelchPlan::Cue> SquelchPlan::timeout(Identity sender, std::uint64_t lastAcceptedFrame) {
+	return end(sender, lastAcceptedFrame, m_clock());
+}
+
+std::vector< SquelchPlan::Cue > SquelchPlan::end(Identity sender, std::uint64_t lastAcceptedFrame,
+												 std::int64_t endedAtUs) {
 	std::vector<Cue> cues;
 	if (!m_enabled) return cues;
 	// Same short metadata lock as the previous timeout invalidation. No user
@@ -79,9 +87,8 @@ std::vector<SquelchPlan::Cue> SquelchPlan::timeout(Identity sender, std::uint64_
 		return cues;
 	}
 	stream->second.ended = true;
-	const auto now = m_clock();
 	for (const auto &recipient : stream->second.recipients)
-		cues.push_back({Kind::Close, sender, recipient.identity, stream->second.generation, now});
+		cues.push_back({ Kind::Close, sender, recipient.identity, stream->second.generation, endedAtUs });
 	return cues;
 }
 
@@ -150,4 +157,27 @@ bool SquelchPlan::current(const Cue &cue) const {
 			return recipient.opened && (cue.kind == Kind::Open || (stream->second.ended && recipient.closed));
 		}
 	return false;
+}
+
+void SquelchPlan::retainRecipients(Identity sender, const std::vector< Identity > &delivered) {
+	std::lock_guard< std::mutex > lock(m_mutex);
+	auto it = m_channels.find(sender.channel);
+	if (it == m_channels.end() || !(it->second.sender == sender))
+		return;
+	auto &recipients = it->second.recipients;
+	recipients.erase(std::remove_if(recipients.begin(), recipients.end(),
+									[&](const Recipient &r) {
+										return std::find(delivered.begin(), delivered.end(), r.identity)
+											   == delivered.end();
+									}),
+					 recipients.end());
+}
+void SquelchPlan::invalidateRecipient(std::uint64_t connection) {
+	std::lock_guard< std::mutex > lock(m_mutex);
+	for (auto &entry : m_channels) {
+		auto &recipients = entry.second.recipients;
+		recipients.erase(std::remove_if(recipients.begin(), recipients.end(),
+										[&](const Recipient &r) { return r.identity.connection == connection; }),
+						 recipients.end());
+	}
 }

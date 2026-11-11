@@ -11,9 +11,9 @@ RUN set -eu; export DEBIAN_FRONTEND=noninteractive; \
       libavahi-compat-libdnssd-dev libzeroc-ice-dev; \
     rm -rf /var/lib/apt/lists/*
 ARG FUNK_BUILD_JOBS=2
-COPY . .
 # The optional CA and temporary combined bundle never enter the runtime image.
-RUN --mount=type=secret,id=proxy_ca,required=false \
+RUN --mount=type=bind,source=.,target=/src,rw \
+    --mount=type=secret,id=proxy_ca,required=false \
     set -eu; \
     case "$FUNK_BUILD_JOBS" in ''|*[!0-9]*) echo 'FUNK_BUILD_JOBS must be 1..16' >&2; exit 1;; esac; \
     test "$FUNK_BUILD_JOBS" -ge 1; test "$FUNK_BUILD_JOBS" -le 16; \
@@ -30,7 +30,10 @@ RUN --mount=type=secret,id=proxy_ca,required=false \
     cmake --build /build --parallel "$FUNK_BUILD_JOBS"; \
     ctest --test-dir /build --output-on-failure; \
     python3 -m unittest discover -s scripts/docker/tests -p 'test_*.py'; \
-    mkdir -p /out; cp /build/mumble-server /out/; \
+    mkdir -p /out/doc/third-party; cp /build/mumble-server /out/; \
+    cp LICENSE /out/doc/LICENSE; chmod 0644 /out/doc/LICENSE; \
+    cp -R 3rdPartyLicenses/. /out/doc/third-party/; \
+    cp 3rdparty/speexdsp/COPYING /out/doc/SpeexDSP-COPYING; \
     strip /out/mumble-server; \
     rm -rf /var/lib/apt/lists/* /tmp/build-ca.pem
 
@@ -51,9 +54,7 @@ COPY --from=build /out/mumble-server /usr/local/bin/mumble-server
 COPY scripts/docker/runtime.py /usr/local/bin/funk-container
 COPY --chmod=0644 scripts/funk/audio.py scripts/funk/audio-preview/audio_control.py /usr/local/lib/mumble-funk/
 COPY --chmod=0644 assets/audio/busy-tone.wav assets/audio/squelch-open.wav assets/audio/squelch-close.wav assets/audio/radio-noise.wav assets/audio/LICENSE.md /usr/local/share/mumble-funk/audio/
-COPY --chmod=0644 LICENSE /usr/share/doc/mumble-funk/LICENSE
-COPY 3rdPartyLicenses /usr/share/doc/mumble-funk/third-party
-COPY --from=build /src/3rdparty/speexdsp/COPYING /usr/share/doc/mumble-funk/SpeexDSP-COPYING
+COPY --from=build /out/doc/ /usr/share/doc/mumble-funk/
 RUN chmod 0755 /usr/local/bin/funk-container /usr/local/lib/mumble-funk \
       /usr/local/share/mumble-funk /usr/local/share/mumble-funk/audio; \
     chmod -R a+rX /usr/share/doc/mumble-funk; \

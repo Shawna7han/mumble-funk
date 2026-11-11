@@ -280,3 +280,107 @@ crypto lock is released and before `sendmsg` consumes it. The per-user crypto
 lock still protects encryption state; the thread-local buffer separately protects
 the lifetime of the outgoing bytes. The concurrent-ingress regression checks
 1,024 authenticated packets and their unchanged payloads at one UDP receiver.
+
+### Isolated AnalogVoiceService (B3; not active in Server)
+
+`tools/analog-voice` optionally builds one worker with four preconstructed codec
+slots. **Server does not own or call this service in B3.** The existing
+`Transmission` guard and direct forwarding above remain unchanged.
+
+The tested future handoff order is voice lock -> Simplex `Transmission` mutex ->
+short service mutex. `Transmission::started` identifies an actually accepted new transmission independently
+of diagnostic callbacks and source frame resets. While the guard still owns its lock, copy recipient identities
+and payload into `open`/`submit` (or reserve `finish` for a technical boundary).
+Only successful ordered admission may replace direct forwarding in B4. A rejected
+admission is a delivery failure; it must never send originals around an existing
+channel barrier. No service method obtains a voice or Simplex lock. Worker codec,
+DSP, reset, abort and wake callback calls execute outside the service mutex. The
+worker never calls `SimplexController::begin` or decides eligibility.
+
+The dispatcher acknowledges one coalesced wake, takes bounded batches under the
+service mutex, releases that mutex, then resolves recipients and sends. B4 must
+hold the appropriate voice/lifetime protection across `take` and local network
+submission, and must recheck the current permission set without expanding the
+returned recipients. Never hold the service mutex over server/network calls or
+call the dispatcher synchronously from `Wake`. At most one notification may be
+pending in addition to the currently running callback. Callbacks must not throw;
+the injected clock must be monotonic, short, nonthrowing and must not reenter.
+
+Control-plane changes update connection routing epochs under voice protection;
+service invalidation never waits for a codec. Recipient Deaf/SelfDeaf changes use
+`setReceive`, not an additional Simplex send restriction. It irrevocably prunes
+that identity from every pending recipient snapshot without cancelling its own
+sending generation. `update` is for channel/send-routing changes and invalidates
+that connection's own queued generations; neither method changes Simplex ownership.
+Release callbacks invoked under Simplex may only reserve a service control state;
+they must not acquire voice locks. A confirmed marker closes via its admitted
+payload ticket, not a premature callback invalidation. Genuine invalidation
+cancels pending results; a normal Simplex release does not.
+
+Shutdown owner: stop admission and UDP/control producers, invalidate queued Qt
+callbacks via their QObject/lifetime context, call `shutdown`/join outside voice,
+Simplex and service locks, then destroy service/server data. Shutdown is idempotent
+but concurrent shutdown callers/destruction are not supported. Keep the Wake
+context alive until join returns. See [B3](../funk/analog-voice-b3.md) and the
+[B4 handoff](../funk/analog-voice-b4-handoff.md) for remaining integration work.
+
+### Experimental Server integration (B4)
+
+B6B adds optional `analog_*` pipeline records to the existing SimplexLogger.
+B6C adds fixed queue snapshots and codec-cause fields to those same records,
+plus aggregate queue high-water/job-age counters under the existing service
+mutex. The packet array derives from the unchanged 5760-sample budget and the
+smallest supported 480-sample input, plus an empty terminator; the separate
+four-job pre-encode reserve is unchanged. Result backpressure, lock order,
+notification coalescing and the 40-ms job-age checks are unchanged.
+They use its bounded try-lock queue under the already-held Simplex/voice guard;
+the dispatcher emits records only after the service mutex has been released.
+No audio content, synchronous disk IO, worker-to-server callbacks or new event
+queues are introduced. Service statistics remain protected by the service mutex;
+local handoff counters are main-thread-only. Missing log records are permitted
+and reported as diagnostic loss; exact admission totals use service counters.
+See [the B6B investigation](../funk/analog-voice-b6b.md).
+
+With a successfully configured `analogvoice=true` service, `processMsg` replaces
+local submission with `open`/`submit` while its original Transmission guard still
+owns the Simplex mutex. `started` alone opens a generation. The order is voice
+read/write -> Simplex -> short service mutex. `m_analogTransmissions` is accessed
+only under Simplex; ServerUser identities are published under voice write. Pure
+receive changes use `setReceive`; send/channel changes use `update`.
+
+The release sink only reserves `finish` on timeout or `cancel` on invalidation;
+confirmed markers remain valid until their admitted payload ends. It takes no
+voice lock and accesses no users. No worker takes a server lock or touches Qt
+network objects. No executing codec call owns a server/Simplex lock.
+
+The queued main-thread dispatcher acquires voice **write** with try-lock before
+acknowledging or popping anything. A failed try-lock leaves the coalesced service
+notification pending and schedules one context-bound retry. After `take` releases
+the service mutex, identities and permissions are checked and the shared
+`sendVoicePacket` path packages the packet. The write lock also excludes UDP
+updates of its destination scratch state. TCP is submitted immediately in this
+main-thread path, with a bounded TLS backlog check; no new session-only queued
+transmit may outlive that identity check. The default direct path retains its
+original signal behavior. Worker join occurs after stopping UDP and Simplex
+expiry, with no voice/Simplex/cache lock held; QObject context survives the join.
+
+Squelch/Noise are suppressed only for a successfully enabled analog service until
+B5 defines their output-order lifecycle. The disabled path retains its original
+guard-through-send-and-effect contract. See [B4](../funk/analog-voice-b4.md).
+
+### Ordered analog effect lifecycle (B5)
+
+The main-thread dispatcher holds voice write protection across local speech
+handoff and its subsequent original-ticket observation. `AnalogVoiceLifecycle`
+uses one fixed state per service lane/generation; source tickets are observed at
+most once in source order. A send result records local submission only. TLS
+backlog rejection or a failed UDP syscall cannot create a successful recipient.
+Recipient intersections can only shrink. Terminal batches finish the lifecycle
+after the complete speech drain, using the original monotonic end time.
+
+Simplex timeout callbacks reserve `finish` with the timeout frame/time; they
+never take voice protection or access users. Real invalidations may invalidate
+Squelch metadata under its existing short lock. No Squelch operation acquires a
+service, voice or Simplex lock in reverse. The worker never invokes effects.
+AudioFeedback/Noise continue on their existing timer/producer architecture.
+The original direct-path locking and Unix queued SIGTERM shutdown remain intact.

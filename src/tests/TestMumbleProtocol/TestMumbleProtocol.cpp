@@ -1,3 +1,4 @@
+#include "UDPTunnelHeader.h"
 // Copyright 2022-2023 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
@@ -98,6 +99,11 @@ template< Mumble::Protocol::Role encoderRole, Mumble::Protocol::Role decoderRole
 		// Regular connectivity ping
 		auto encodedData = encoder.encodePingPacket(data);
 		QVERIFY(decoder.decode(encodedData));
+		{
+			std::vector< Mumble::Protocol::byte > shifted(encodedData.size() + 1);
+			std::copy(encodedData.begin(), encodedData.end(), shifted.begin() + 1);
+			QVERIFY(decoder.decode({ shifted.data() + 1, encodedData.size() }));
+		}
 
 		QCOMPARE(decoder.getMessageType(), Mumble::Protocol::UDPMessageType::Ping);
 		QCOMPARE(decoder.getPingData(), data);
@@ -119,6 +125,11 @@ template< Mumble::Protocol::Role encoderRole, Mumble::Protocol::Role decoderRole
 
 			encodedData = encoder.encodePingPacket(data);
 			QVERIFY(decoder.decode(encodedData));
+			{
+				std::vector< Mumble::Protocol::byte > shifted(encodedData.size() + 1);
+				std::copy(encodedData.begin(), encodedData.end(), shifted.begin() + 1);
+				QVERIFY(decoder.decode({ shifted.data() + 1, encodedData.size() }));
+			}
 
 			QCOMPARE(decoder.getMessageType(), Mumble::Protocol::UDPMessageType::Ping);
 			QCOMPARE(decoder.getPingData(), data);
@@ -132,6 +143,11 @@ template< Mumble::Protocol::Role encoderRole, Mumble::Protocol::Role decoderRole
 
 			encodedData = encoder.encodePingPacket(data);
 			QVERIFY(decoder.decode(encodedData));
+			{
+				std::vector< Mumble::Protocol::byte > shifted(encodedData.size() + 1);
+				std::copy(encodedData.begin(), encodedData.end(), shifted.begin() + 1);
+				QVERIFY(decoder.decode({ shifted.data() + 1, encodedData.size() }));
+			}
 
 			QCOMPARE(decoder.getMessageType(), Mumble::Protocol::UDPMessageType::Ping);
 		}
@@ -243,6 +259,16 @@ template< Mumble::Protocol::Role encoderRole, Mumble::Protocol::Role decoderRole
 class TestMumbleProtocol : public QObject {
 	Q_OBJECT
 private slots:
+	void tunnelHeader() {
+		for (unsigned int offset = 0; offset < 8; ++offset) {
+			QByteArray bytes(20, char(0x55));
+			auto *p = reinterpret_cast< unsigned char * >(bytes.data()) + offset;
+			Mumble::Protocol::writeUDPTunnelHeader(p, 0x12345678);
+			QCOMPARE(QByteArray(reinterpret_cast< const char * >(p), 6).toHex(), QByteArray("000112345678"));
+			QCOMPARE(bytes.at(int(offset + 6)), char(0x55));
+		}
+	}
+
 	void test_ping_client_to_server() {
 		do_test_ping< Mumble::Protocol::Role::Client, Mumble::Protocol::Role::Server >();
 	}

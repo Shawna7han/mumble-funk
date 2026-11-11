@@ -1,0 +1,44 @@
+name: Analog voice isolated tests
+on:
+  push:
+    branches: ['feature/analog-voice-live']
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'tools/analog-voice/**'
+      - 'src/murmur/SimplexController.*'
+      - '.github/workflows/analog-voice.yml'
+permissions:
+  contents: read
+jobs:
+  audio:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        checks: [release, asan-ubsan, tsan]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated test dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libopus-dev qtbase5-dev
+      - name: Configure and build
+        shell: bash
+        run: |
+          options=(-DCMAKE_BUILD_TYPE=Release)
+          if [[ '${{ matrix.checks }}' == asan-ubsan ]]; then
+            options=(-DCMAKE_BUILD_TYPE=Debug -DVOICE_SANITIZERS=ON)
+          elif [[ '${{ matrix.checks }}' == tsan ]]; then
+            options=(-DCMAKE_BUILD_TYPE=Debug -DVOICE_THREAD_SANITIZER=ON)
+          fi
+          cmake -S tools/analog-voice -B work/audio -G Ninja \
+            -DCMAKE_UNITY_BUILD=OFF -DVOICE_BUILD_LIVE=ON -DVOICE_BUILD_SERVICE=ON \
+            -DVOICE_BUILD_SIMPLEX_TESTS=ON -DVOICE_BUILD_PREVIEW=ON "${options[@]}"
+          cmake --build work/audio --parallel 2
+      - name: Run tests
+        shell: bash
+        run: |
+          if [[ '${{ matrix.checks }}' == tsan ]]; then
+            ctest --test-dir work/audio -R VoiceService --output-on-failure
+          else
+            ctest --test-dir work/audio --output-on-failure
+          fi

@@ -18,8 +18,9 @@ kein zusätzliches Override über `compose.yaml`.
 - Derselbe Servercode und dasselbe Multi-Stage-Dockerfile; keine zweite Audio-Engine.
 - Simplex, Busy, Squelch Open/Close, Timeout-Close, Funkrauschen und alle vier
   CC0-Aufnahmen einschließlich eigener WAV-Verwaltung.
-- [Aktuelle Dev-Defaults](audio-defaults.md): neue INIs aktivieren Effekte,
-  Busy/Open/Close bei 50 %, deren Boost +8 dB, Rauschen bei 20 ohne Boost.
+- [CB-Neuinstallationsvorgaben aus PR #15](audio-defaults.md), erst nach gesonderter
+  Übernahme/Veröffentlichung: Analog Voice mit `cb-am`, Effekte aktiv, Busy bei
+  100 %, Open/Close bei 80 %, deren Boost +8 dB, Rauschen bei 20 ohne Boost.
 - Bestehende INIs und fehlende alte Schlüssel werden nicht migriert. Passwörter,
   SQLite, Zertifikate, WAVs und ausgeschaltete Effekte bleiben erhalten.
 - Projektname standardmäßig `mumble-funk-docker`, Dienst `mumble-funk`, Volumes
