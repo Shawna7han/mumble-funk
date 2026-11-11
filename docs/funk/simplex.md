@@ -1,3 +1,8 @@
+> **Einordnung:** Simplex ist auch im aktuellen Dev mit den integrierten
+> Audiofunktionen enthalten. Die historischen Branch-/Updatebefehle unten sind
+> kein Dev-Installationsweg. Für Dev [install-dev.md](install-dev.md) mit
+> `--experimental-dev` verwenden; bestehende INIs behalten ihre Werte.
+
 # Simplex v0.2: aktualisieren, einschalten und testen
 
 Unser Funkmodus erlaubt **einen Sender je Mumble-Kanal**. Der erste berechtigte

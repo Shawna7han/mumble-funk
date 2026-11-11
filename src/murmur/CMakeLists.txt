@@ -19,6 +19,18 @@ option(ice "Build support for Ice RPC." ON)
 find_pkg(Qt5 COMPONENTS Sql REQUIRED)
 find_package(Threads REQUIRED)
 
+find_pkg("opus;Opus" REQUIRED)
+add_library(audio-feedback STATIC RadioNoise.cpp RadioNoise.h AudioFeedback.cpp AudioFeedback.h AudioSignal.cpp AudioSignal.h SquelchPlan.cpp SquelchPlan.h)
+target_include_directories(audio-feedback PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${opus_INCLUDE_DIRS})
+target_link_libraries(audio-feedback PUBLIC Qt5::Core Threads::Threads ${opus_LIBRARIES})
+if(TARGET opus)
+ target_link_libraries(audio-feedback PUBLIC opus)
+elseif(TARGET Opus)
+ target_link_libraries(audio-feedback PUBLIC Opus)
+elseif(TARGET Opus::opus)
+ target_link_libraries(audio-feedback PUBLIC Opus::opus)
+endif()
+
 set(MURMUR_SOURCES
 	"main.cpp"
 	"AudioReceiverBuffer.cpp"
@@ -85,7 +97,7 @@ target_include_directories(mumble-server PRIVATE
 	${SHARED_SOURCE_DIR}
 )
 
-target_link_libraries(mumble-server PRIVATE shared Qt5::Sql Threads::Threads)
+target_link_libraries(mumble-server PRIVATE shared Qt5::Sql Threads::Threads audio-feedback)
 
 if(static)
 	# MariaDB and MySQL

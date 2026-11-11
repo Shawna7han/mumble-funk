@@ -1,7 +1,9 @@
-> Gemeinsamer Stable-Kandidat: Ubuntu und Docker verwenden denselben Commit.
-> Für die einfache Installation und den Wechsel aus `funk-v0.1` zuerst
-> [setup.md](setup.md) lesen. Die manuellen Schritte unten bleiben verfügbar;
-> Pfade und Dienstname sind unverändert. Kein neuer Release-Tag ist freigegeben.
+> **Diese technische Anleitung bezieht sich auf den bisherigen Stable-Kandidaten.**
+> Für den aktuellen experimentellen Dev-Stand mit integrierter Audio-Engine,
+> Busy, Squelch, Boost und Funkrauschen die [Dev-Anleitung](install-dev.md)
+> mit `setup.sh --experimental-dev` verwenden.
+> [Audio-Defaults](audio-defaults.md) · [Funkrauschen und WAV-Verwaltung](radio-noise.md).
+> Bestehende Einstellungen und eigene Dateien bleiben bei Updates erhalten.
 
 # Mumble-Funk parallel unter Ubuntu Server 24.04 oder 26.04 installieren
 

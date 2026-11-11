@@ -1,3 +1,9 @@
+> **Stable oder Dev?** Die Befehle unten installieren den bisherigen
+> `stable`-Simplex-Kandidaten ohne neue Audiofunktionen. Für den aktuellen
+> experimentellen Dev-Stand einschließlich Busy, Squelch und Funkrauschen gilt
+> die [Dev-Anleitung](install-dev.md) mit `--experimental-dev`.
+> [Aktuelle Audio-Defaults und Bestandsschutz](audio-defaults.md).
+
 # Mumble-Funk mit wenigen Befehlen einrichten
 
 Diese Anleitung richtet den **experimentellen Simplex-v0.2-Funkserver** unter
@@ -242,8 +248,11 @@ Containerumgebung stehen im [Setup-Prüfbericht](SETUP-STATUS.md).
 ## Unterstützte Quellstände und Wechsel auf Stable
 
 Das neue Setup akzeptiert unveränderte Checkouts von `stable` oder `funk-v0.1`,
-deren HEAD dem jeweiligen lokalen `origin`-Referenzstand entspricht. Vorher `git fetch origin` verwenden. `origin` muss auf `Shawna7han/mumble-funk` zeigen. `dev`, Feature-
-Branches, lokale Zusatzcommits und unbekannte Quellstände bleiben gesperrt. Das ist
+deren HEAD dem jeweiligen lokalen `origin`-Referenzstand entspricht. Vorher `git fetch origin` verwenden. `origin` muss auf `Shawna7han/mumble-funk` zeigen. `dev` benötigt ausdrücklich `--experimental-dev` und einen mit dem lokalen
+`origin/dev` sowie dem live veröffentlichten GitHub-Stand identischen Commit.
+Die bekannten Audio-Feature-Branches benötigen weiterhin ihre jeweiligen
+Opt-in-Schalter. Andere Feature-Branches, lokale Zusatzcommits und unbekannte
+Quellstände bleiben gesperrt. Das ist
 eine Bedienungsschutzprüfung, kein Ersatz für eine kryptografische Signatur.
 
 Bei einer vorhandenen Installation zuerst die eigene Konfiguration/Daten sichern

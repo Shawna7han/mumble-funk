@@ -1,0 +1,5 @@
+add_executable(TestAudioFeedback TestAudioFeedback.cpp ${CMAKE_SOURCE_DIR}/src/murmur/SimplexController.cpp)
+set_target_properties(TestAudioFeedback PROPERTIES AUTOMOC ON)
+target_link_libraries(TestAudioFeedback PRIVATE shared Qt5::Test audio-feedback)
+add_test(NAME TestAudioFeedback COMMAND $<TARGET_FILE:TestAudioFeedback>)
+set_tests_properties(TestAudioFeedback PROPERTIES TIMEOUT 120)

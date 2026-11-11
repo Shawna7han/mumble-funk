@@ -1,0 +1,121 @@
+name: Publish explicitly approved Dev image
+on:
+  push:
+    tags: ['ghcr-dev-*']
+permissions:
+  contents: read
+concurrency:
+  group: ghcr-dev-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      image: ${{ steps.source.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Refresh published Dev reference
+        run: git fetch --no-tags origin refs/heads/dev:refs/remotes/origin/dev
+      - name: Verify exact annotated publication tag and Dev membership
+        id: source
+        run: python3 scripts/docker/image_release.py verify
+  build-and-test:
+    needs: guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      image-id: ${{ steps.identity.outputs.image-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - run: git fetch --no-tags origin refs/heads/dev:refs/remotes/origin/dev
+      - run: python3 scripts/docker/image_release.py verify
+      - name: Install existing server test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config python3 python3-yaml qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libboost-dev libssl-dev libopus-dev libprotobuf-dev protobuf-compiler libprotoc-dev libcap-dev libavahi-compat-libdnssd-dev libzeroc-ice-dev iproute2
+      - name: Native server, protocol probe and existing tests
+        run: |
+          cmake -S . -B build/funk -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_NUMBER=939 -Dclient=OFF -Dserver=ON -Dtests=ON -Dplugins=OFF -Doverlay=OFF -Dlto=OFF -DCMAKE_UNITY_BUILD=OFF -DCMAKE_PROJECT_mumble_INCLUDE="$PWD/scripts/docker/tests/register.cmake"
+          cmake --build build/funk --parallel 2
+          ctest --test-dir build/funk --output-on-failure
+          python3 tests/funk-install/test_install.py build/funk/mumble-server
+          python3 tests/funk-install/test_audio_assets.py build/funk/mumble-server
+          python3 tests/funk-install/test_audio_preview.py build/funk/mumble-server
+          python3 tests/funk-install/test_squelch_admin.py build/funk/mumble-server
+          python3 tests/funk-install/test_audio_boost.py build/funk/mumble-server
+          python3 tests/funk-install/test_audio_defaults.py build/funk/mumble-server build/funk/FunkDockerProbe
+          python3 tests/funk-install/test_radio_noise_install.py build/funk/mumble-server
+          python3 tests/funk-install/test_source.py
+          python3 tests/funk-install/test_setup.py
+          python3 tests/funk-install/test_audio_security.py
+          python3 tests/funk-install/test_ghcr_workflow.py
+      - name: Build unchanged Dockerfile, including complete server and Python tests
+        run: |
+          python3 scripts/docker/image_release.py metadata
+          python3 scripts/docker/image_release.py build
+      - name: Test prebuilt Compose, local-to-image migration, audio and recovery
+        env:
+          TEST_IMAGE: ${{ needs.guard.outputs.image }}
+        run: |
+          python3 scripts/docker/tests/integration.py --probe "$PWD/build/funk/FunkDockerProbe" --native-server "$PWD/build/funk/mumble-server" --image "$TEST_IMAGE" --previous-image "$TEST_IMAGE" --compose-file "$PWD/compose.ghcr.yaml" --audio-feedback --radio-noise --host-port 64740
+      - name: Save the exact tested image, not a rebuild
+        id: identity
+        env:
+          TEST_IMAGE: ${{ needs.guard.outputs.image }}
+        run: |
+          image_id=$(python3 scripts/docker/image_release.py inspect)
+          printf 'image-id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
+          docker save "$TEST_IMAGE" | gzip > build/ghcr/image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tested-dev-image
+          path: |
+            build/ghcr/image.tar.gz
+            build/ghcr/metadata.json
+          if-no-files-found: error
+          retention-days: 3
+  publish:
+    needs: [guard, build-and-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-dev-image
+          path: build/ghcr
+      - name: Recheck source and load the tested artifact
+        run: |
+          git fetch --no-tags origin refs/heads/dev:refs/remotes/origin/dev
+          python3 scripts/docker/image_release.py verify
+          gzip -dc build/ghcr/image.tar.gz | docker load
+      - name: Publish only the verified, not previously published Dev tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_IMAGE_ID: ${{ needs.build-and-test.outputs.image-id }}
+        run: python3 scripts/docker/image_release.py publish --expected-id "$EXPECTED_IMAGE_ID"
+      - name: Remove ephemeral registry credentials
+        if: always()
+        run: docker logout ghcr.io
+      - uses: actions/upload-artifact@v4
+        with:
+          name: published-dev-image-identity
+          path: build/ghcr/publication.json
+          if-no-files-found: error
+          retention-days: 90

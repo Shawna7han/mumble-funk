@@ -1,3 +1,10 @@
+> **Geltungsbereich:** Diese Anleitung beschreibt den bisherigen Stable-Stand,
+> dessen Host-Fallback 64739 war. Der neue Entwicklungsstand
+> `feature/docker-port-default` verwendet 64740. Vor einem späteren Wechsel auf
+> diesen Stand den tatsächlichen bisherigen Port ausdrücklich festhalten; siehe
+> [Bestandsschutz beim Update](docker.md#9-aktualisieren). Der Vergleich unten
+> muss bei einer unerwarteten Portänderung anhalten. Keine `.env` ersetzen.
+
 # Bestehenden Docker-Server auf Stable umstellen
 
 Diese Schritte führt der Kollege **selbst auf seinem Docker-Host** aus. Sie werden

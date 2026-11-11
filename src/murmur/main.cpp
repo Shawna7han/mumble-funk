@@ -7,6 +7,7 @@
 #	include "DBus.h"
 #endif
 
+#include "AudioSignal.h"
 #include "EnvUtils.h"
 #include "License.h"
 #include "LogEmitter.h"
@@ -15,6 +16,7 @@
 #include "Server.h"
 #include "ServerDB.h"
 #include "Version.h"
+#include <exception>
 
 #include <csignal>
 #include <iostream>
@@ -342,6 +344,35 @@ int main(int argc, char **argv) {
 			detach = false;
 		} else if ((arg == "-v")) {
 			bVerbose = true;
+		} else if (arg == "--validate-radio-noise-wav" && i + 1 < args.size()) {
+			try {
+				// Reuse the exact bounded parser used by RadioNoise at startup.
+				AudioSignal::loadWav(args.at(++i), AudioSignal::LengthPolicy::RadioNoise);
+				std::cout << "Valid radio noise WAV" << std::endl;
+				return 0;
+			} catch (const std::exception &error) {
+				std::cerr << error.what() << std::endl;
+				return 1;
+			}
+		} else if (arg == "--validate-squelch-wav" && i + 1 < args.size()) {
+			try {
+				AudioSignal::encodeWavSignal(args.at(++i), 100);
+				std::cout << "Valid Squelch WAV" << std::endl;
+				return 0;
+			} catch (const std::exception &error) {
+				std::cerr << error.what() << std::endl;
+				return 1;
+			}
+		} else if (arg == "--validate-feedback-wav" && i + 1 < args.size()) {
+			try {
+				const auto pcm = AudioSignal::loadWav(args.at(++i));
+				AudioSignal::encode(pcm, 100);
+				std::cout << "Valid feedback WAV" << std::endl;
+				return 0;
+			} catch (const std::exception &error) {
+				std::cerr << error.what() << std::endl;
+				return 1;
+			}
 		} else if ((arg == "-version") || (arg == "--version")) {
 			// Print version and exit (print to regular std::cout to avoid adding any useless meta-information from
 			// using e.g. qWarning
@@ -380,6 +411,9 @@ int main(int argc, char **argv) {
 			detach = false;
 			qInfo("Usage: %s [-ini <inifile>] [-supw <password>]\n"
 				  "  --version              Print version information and exit\n"
+				  "  --validate-radio-noise-wav FILE  Validate a loop PCM WAV asset and exit\n"
+				  "  --validate-squelch-wav FILE  Validate a short PCM WAV signal and exit\n"
+				  "  --validate-feedback-wav FILE  Validate a private PCM WAV asset and exit\n"
 				  "  -ini <inifile>         Specify ini file to use.\n"
 				  "  -supw <pw> [srv]       Set password for 'SuperUser' account on server srv.\n"
 #ifdef Q_OS_UNIX

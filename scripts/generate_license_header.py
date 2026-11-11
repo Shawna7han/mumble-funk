@@ -23,6 +23,7 @@ repoRoot = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 licenses = [
     ["licenseMumble", "LICENSE", "Mumble", "https://www.mumble.info/"],
     ["licenseSPEEXDSP", "3rdparty/speexdsp/COPYING", "SpeexDSP", "http://www.speex.org/"],
+    ["licenseOpus", "3rdPartyLicenses/libopus_license.txt", "Opus", "https://www.opus-codec.org/"],
     ["licenseOpenSSL", "3rdPartyLicenses/openssl_license.txt", "OpenSSL", "http://www.openssl.org/"],
     ["licenseLibsndfile", "3rdPartyLicenses/libsndfile_license.txt", "libsndfile", "http://www.mega-nerd.com/libsndfile/"],
     ["licenseOgg", "3rdPartyLicenses/libogg_license.txt", "libogg", "http://www.xiph.org/"],

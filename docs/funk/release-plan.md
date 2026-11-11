@@ -1,70 +1,88 @@
-# Releaseplan nach der Ubuntu-/Docker-Integration
+# Releaseplan: Stable-Kandidat und integrierte Audioentwicklung
 
-Die Installation wird gemeinsam auf `stable` vorbereitet. Dieser Branch ist
-zunächst ein **Kandidat**: Die endgültige Freigabe folgt erst nach dem Test des
-Kollegen auf seinem Docker-Host. Es werden jetzt kein Release, kein neuer Tag und
-kein öffentliches Registry-Image erstellt. GitHubs Standardbranch bleibt `master`.
+Stand: **25. Oktober 2026**. GitHub-Standardbranch ist bereits **`stable`**.
+Diese Dokumentationsüberarbeitung ändert weder Standardbranch noch Branchschutz,
+Versionstags, Releases, Registry-Images oder laufende Installationen.
+
+## Zwei getrennte Quellstände
+
+| Stand | Revision bei dieser Bestandsaufnahme | Bedeutung |
+| --- | --- | --- |
+| Bisheriger Stable-Kandidat | `510f90618212511c8bac2c0c4732dca317d1d205` | Gemeinsame Ubuntu-/Docker-Basis, Simplex v0.2, ohne neue Audio-Engine. |
+| Aktueller Dev nach PR #9 | `a6b63175b7e94e503c410706dba87e23d861f46e` | Integrierte Audiofunktionen einschließlich Funkrauschen, CC0-Aufnahmen, gemeinsamer Effektstream und Verwaltung. Weiterhin experimentell. |
+
+Die Audiointegration in Dev ist **keine Übernahme nach Stable**. Eine Freigabe
+muss den konkreten Quellcommit, den Funktionsumfang und beide Installationswege
+benennen. Stable wird nicht rückwirkend als Audioversion beschrieben.
+[Branch- und Merge-Nachweise](development.md).
 
 ## Versionsidentität
 
-Vorschlag für die gemeinsame nächste Veröffentlichung: **`funk-v0.2.1`**.
-Mumble-Basis: **1.5.939**, Simplex-Engine: weiterhin **v0.2**.
-Das vorhandene annotierte `funk-v0.2.0` bleibt unverändert auf
-`95ac344838c1535f943dccc7d134a280aac6a340` und enthält noch keine Docker-Verpackung.
-Die experimentelle Audio-Entwicklung gehört nicht zu diesem Kandidaten.
-
-Ubuntu und Docker müssen aus demselben vollständigen Git-Commit gebaut werden:
+Mumble-Basis bleibt **1.5.939**, Simplex-Engine **v0.2**. Ubuntu und Docker müssen
+für dieselbe Veröffentlichung denselben vollständigen Git-Commit bauen:
 
 ```bash
 git rev-parse HEAD
 ```
 
-Diese ID gehört in Testberichte und Fehlermeldungen. `Mumble 1.5.939` und der
-bewegliche Branchname allein reichen nicht. Unterschiedliche Bibliotheken oder
-Compiler dürfen unterschiedliche Binärdateien erzeugen. Noch werden keine
-unveränderlichen vorgefertigten Registry-Images verteilt; Docker baut lokal.
+Nativ steht die installierte Revision zusätzlich in
+`/opt/mumble-funk/current/BUILD-INFO`. Unterschiedliche Compiler oder Bibliotheken
+dürfen unterschiedliche Binärdateien erzeugen; entscheidend ist die Quellrevision.
+Der bewegliche Branchname und „Mumble 1.5.939“ allein reichen nicht aus.
 
-## Vor der endgültigen Freigabe
+Das annotierte `funk-v0.2.0` bleibt unverändert auf
+`95ac344838c1535f943dccc7d134a280aac6a340` und markiert den früheren Simplex-Stand
+noch ohne Docker-Verpackung. `funk-v0.2.1` war der Vorschlag für die frühere
+Ubuntu-/Docker-Zusammenführung; ein entsprechender veröffentlichter Versionstag
+war bei der Bestandsaufnahme nicht vorhanden. Die Versionsnummer einer künftigen
+Audioveröffentlichung ist separat festzulegen, nicht stillschweigend aus diesem
+alten Vorschlag abzuleiten. Hier wird kein Tag oder Release erzeugt.
 
-- [ ] Den im Integrationsbericht benannten Kandidaten auf dem echten Docker-Host
-  des Kollegen mit vorhandenem Projekt, Port 64740 und gespeicherten Daten testen.
-- [ ] Mumla/Windows-Mumble: hörbare Sprache, konkurrierende PTT-Versuche, Ende und
-  Timeout, Kanalwechsel, Trennung/Wiederverbindung und schnellen Wechsel prüfen.
-- [ ] UDP und TCP-Tunnel durch die tatsächliche Firewall/NAT prüfen.
-- [ ] Reales Host-/Docker-Neustartverhalten und native systemd-VM-Starts prüfen;
-  Container-/Dienstsimulationen nicht als VM-Neustartnachweis zählen.
-- [ ] Backup, Wiederherstellung und Rückkehr zum vorherigen Image auf dem Zielhost
-  nachvollziehen. Automatisierte Cloud-Tests ersetzen diesen Abnahmeschritt nicht.
-- [ ] Umfang und Ergebnis eines längeren Betriebsversuchs dokumentieren. Kein
-  abgeschlossener Langzeit-/Lasttest und keine ARM-Freigabe werden behauptet.
-- [ ] Inhaber gibt die konkrete vollständige Commit-ID zur Veröffentlichung frei.
+## Nachgewiesene Entwicklung und offene Freigabeschritte
 
-Nach dieser Freigabe können ein neues annotiertes Versionstag, Release-Unterlagen
-und später ein Registry-Veröffentlichungsweg gesondert beauftragt werden. Erst nach
-separater Zustimmung wird GitHubs Standardbranch `stable`. `master` und bisherige
-Entwicklungsbranches bleiben bis dahin erhalten.
+Die [Entwicklungsübersicht](development.md#tests-und-praxiserfahrung) trennt
+implementierte Funktionen, automatisierte Ergebnisse und gemeldete Gerätetests.
+Der Betreiber meldet eine erfolgreiche native Ubuntu-Neuinstallation und
+Windows-/Mumla-Hörtests. Die frühere Behauptung, alle Audiofunktionen seien noch
+außerhalb von Dev, ist seit den abgeschlossenen Integrationen überholt.
 
-## GitHub-Prüfungen und spätere GHCR-Veröffentlichung
+Vor einer Veröffentlichung der Audio-Version bleiben insbesondere:
 
-Die Integrationsversion enthält serverbezogene Build-, Installer- und CodeQL-
-Workflows. Die früheren Veröffentlichungsaktionen für `mumble-voip/mumble-docker`
-und Mumble-WinGet-Pakete sowie Client-Builds sind dort entfernt. Es gibt keinen
-Registry-Login oder Publish-Job, keine automatischen Backports und keine
-Veröffentlichung beim Anlegen eines Branches. Bestehende historische Branches
-enthalten weiterhin ihre unveränderten Dateien.
+- Den konkreten Dev-Commit samt relevantem CI-Ergebnis und Quellidentität festlegen.
+- Docker mit Windows-Mumble und Android-Mumla praktisch hören: kurze/lange
+  Sendungen, Open/Rauschen/Close, Timeout-Close, Busy und vollständige Sprache.
+- Größere Client-/Netzabdeckung, schnelle PTT-Wechsel, Paketverluste, Mobilfunk,
+  Kanalwechsel, Disconnect und Wiederverbindung untersuchen.
+- Auf dem tatsächlichen Zielhost Start/Neustart, native systemd-VM-Starts und
+  Docker-Betrieb prüfen. Eine Cloud-Simulation ist kein Zielhost-Bootnachweis.
+- Backup, Wiederherstellung und Rollback mit der konkreten Betreiberkonfiguration
+  und bestehenden Daten nachvollziehen; automatisierte Wegwerf-Tests sind dokumentiert.
+- Einen längeren Stabilitäts-/Lastbetrieb dokumentieren. Kein abgeschlossener
+  Langzeittest oder allgemeine ARM-/Clientfreigabe wird behauptet.
+- Ausdrückliche Freigabe des Inhabers für die vollständige Commit-ID und den
+  gewünschten Umfang einer Stable-Übernahme bzw. Veröffentlichung einholen.
 
-Die eigenen Prüfungen bauen Server und Docker, prüfen die vollständige CTest-
-Suite, native Installationshilfen sowie echte Compose-Integration. CodeQL schreibt
-nur Sicherheitsanalyseergebnisse. Die definierten Workflows sind kein Beleg, dass
-GitHub Actions im Fork aktiviert ist oder ein Lauf bereits bestanden wurde; dafür
-sind die tatsächlichen Laufresultate maßgeblich. Es werden keine neuen
-Schutzregeln oder Prüfausnahmen automatisch eingerichtet.
+Erst danach können eine Stable-Integration per PR, neue Versionstags und
+Release-Unterlagen gesondert beauftragt werden. `master`, historische Feature-
+Branches und Archiv-Tags bleiben erhalten; kein automatischer Merge oder Cleanup.
 
-Für späteres GHCR: nur nach Freigabe, mit konkreter Source-ID, OCI-Revision,
-Version und Digest; eigene nur für Veröffentlichung berechtigte Umgebung,
-Inhaberfreigabe und unveränderte frühere Versionen für Rückkehr. Kein automatisches
-Deployment auf fremde oder laufende Server. `docker compose pull` ist für das
-heutige lokale `:local`-Image **kein** Updateweg.
+## Workflows und spätere Registry-Veröffentlichung
 
-[Integrationsnachweis](STABLE-INTEGRATION-STATUS.md) ·
-[Entwicklung](development.md) · [GitHub-Schutzvorschlag](github-collaboration.md)
+Dev enthält serverbezogene Build-, Installer- und CodeQL-Prüfungen einschließlich
+Docker-Integration. Diese werden durch eine reine Dokumentationsänderung nicht
+verändert oder deaktiviert. Ein definierter Workflow und alte erfolgreiche Runs
+beweisen kein aktuelles CI-Ergebnis; nach dem Doku-Push wird nicht auf CI gewartet.
+
+Die frühere Stable-Integration entfernte alte Upstream-Veröffentlichungsaktionen
+für fremde Docker-Repositories, Mumble-WinGet und ungeeignete Client-Builds.
+Der heutige Dockerweg baut lokal; `docker compose pull` ist für das `:local`-Image
+kein Updateweg. Es wird keine GHCR-Veröffentlichung oder automatisches Deployment
+eingerichtet. Ein späterer Registryweg braucht eigene Freigabe, konkrete Source-ID,
+Version und Digest sowie einen nachvollziehbaren Rollback.
+
+Historische Nachweise bleiben unverändert:
+[Stable-Integration](STABLE-INTEGRATION-STATUS.md),
+[ursprünglicher Schutzvorschlag](github-collaboration.md) und
+[Docker-Migration](docker-stable-migration.md). Deren damalige Aussagen über
+Standardbranch, Ports und noch nicht integrierte Audioentwicklung sind zeitgebunden.
+Die aktuelle Rollenverteilung steht ausschließlich in [development.md](development.md).

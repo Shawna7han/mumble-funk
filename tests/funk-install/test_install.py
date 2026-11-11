@@ -51,11 +51,11 @@ class InstallationTests(unittest.TestCase):
             config = root / "etc/mumble-funk/server.ini"
             self.assertIn("port=64739\n", config.read_text())
             self.assertIn("voicediagnostics=false\n", config.read_text())
-            self.assertIn("#simplex=false\n", config.read_text())
+            self.assertIn("simplex=true\n", config.read_text())
             self.assertNotIn("@PASSWORD@", config.read_text())
             self.assertEqual(config.stat().st_mode & 0o777, 0o640)
             config.write_text(config.read_text().replace("voicediagnostics=false", "voicediagnostics=true")
-                              .replace("#simplex=false", "simplex=true"))
+                              .replace("simplex=true", "simplex=false"))
             protected[config] = config.read_bytes()
             db = root / "var/lib/mumble-funk/server.sqlite"
             with sqlite3.connect(db) as connection:
@@ -119,10 +119,11 @@ class InstallationTests(unittest.TestCase):
                     config = (REPO / "scripts/funk/ubuntu/server.ini").read_text()
                     config = config.replace("/var/lib/mumble-funk", str(state))
                     config = config.replace("/var/log/mumble-funk", str(state))
+                    config = config.replace("/usr/local/share/mumble-funk/audio", str(REPO/"assets/audio"))
                     config = config.replace("0.0.0.0", "127.0.0.1").replace("port=64739", f"port={port}")
                     config = config.replace("@PASSWORD@", "test-only")
                     config = config.replace("voicediagnostics=false", f"voicediagnostics={'true' if port == 64739 else 'false'}")
-                    config = config.replace("#simplex=false", f"simplex={'true' if port == 64739 else 'false'}")
+                    config = config.replace("simplex=true", f"simplex={'true' if port == 64739 else 'false'}")
                     config = config.replace("#simplexdiagnostics=false", "simplexdiagnostics=true")
                     config = config.replace("#simplexlogfile=", "simplexlogfile=")
                     (state / "server.ini").write_text(config)

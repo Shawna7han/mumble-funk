@@ -13,6 +13,7 @@
 #endif
 
 #include "ACL.h"
+#include "AudioFeedback.h"
 #include "AudioReceiverBuffer.h"
 #include "Ban.h"
 #include "ChannelListenerManager.h"
@@ -108,6 +109,14 @@ protected:
 	std::unique_ptr< SimplexLogger > m_simplexLogger;
 	std::unique_ptr< SimplexController > m_simplex;
 	QTimer *m_simplexTimer = nullptr;
+	std::unique_ptr< AudioFeedback > m_audioFeedback;
+	std::unique_ptr< SquelchPlan > m_squelchPlan;
+	bool m_busyEnabled = false;
+	bool m_squelchOpenEnabled = true, m_squelchCloseEnabled = true;
+	bool m_squelchTimeoutCloseEnabled = false;
+	bool m_noiseEnabled = false;
+	QTimer *m_audioFeedbackTimer = nullptr;
+	void deliverAudioFeedback();
 	void updateSimplexPermission(const ServerUser &user);
 	std::uint64_t m_nextDiagnosticConnection = 0;
 	void recordVoicePacket(const ServerUser &user, const Mumble::Protocol::AudioData &audio,

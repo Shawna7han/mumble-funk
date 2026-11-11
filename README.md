@@ -2,228 +2,182 @@
 
 **Server-side simplex radio communication for Mumble**
 
-**Stable candidate — proposed release `funk-v0.2.1`.** Ubuntu and Docker now share
-one source revision on [`stable`](https://github.com/Shawna7han/mumble-funk/tree/stable).
-Simplex Engine v0.2 remains an experimental alpha; final Docker acceptance on the
-operator's host is still required. No new version tag or release is published.
-`dev` is the development branch; `master` remains the historical upstream/default
-branch until separately approved.
+Mumble-Funk is an independent, open-source fork of **Mumble Server 1.5.939**.
+It recreates radio-style communication with one transmitter per channel and
+optional server-generated audio effects. **Mumble clients stay unchanged.**
+Windows-Mumble and Android-Mumla are used in the project's practical tests.
 
-[Deutsch](README.de.md) · [Integration evidence](docs/funk/STABLE-INTEGRATION-STATUS.md) ·
-[Development](docs/funk/development.md) · [Release plan](docs/funk/release-plan.md)
+**This README describes `dev`: experimental development, not a Stable release.**
+[Deutsch](README.de.md) · [Dev installation](docs/funk/install-dev.md) ·
+[Docker](docs/funk/docker.md) · [Branches and evidence](docs/funk/development.md)
 
-Mumble-Funk is an independent, open-source fork of the Mumble server, based on
-**Mumble Server 1.5.939**. It adds optional radio-style channel access: one user
-transmits at a time, and the server enforces the rule for unchanged Mumble clients.
+## Features
 
-Ordinary Mumble channels allow several people to speak at once. Mumble-Funk provides
-a shared radio channel where the first accepted sender holds the right to transmit
-and competing transmissions are discarded.
+| Feature in `dev` | Behaviour |
+| --- | --- |
+| Simplex Engine v0.2 | One accepted transmitter per channel; UDP and TCP share the same channel ownership. |
+| Competing transmissions | Rejected senders do not automatically take over when the channel becomes free. A new attempt is required. |
+| Busy Tone | Private feedback to a rejected sender; higher priority than the other effects. |
+| Squelch Open / Close | Optional cues for eligible listeners at the start and end of an accepted transmission. |
+| Timeout Close | Optional Close when packet inactivity releases a transmission without a confirmed end marker. A timeout does not prove physical PTT release. |
+| Continuous radio noise | An independent effect alongside unchanged speech. Open → Noise → Close share one private effect stream with continuous sequence numbers. |
+| Audio controls | Separate volumes, Open/Close switches and a 0–12 dB boost for Busy/Open/Close. Noise has its own volume and is not boosted. |
+| Packaged and custom audio | Four CC0 WAV recordings; replaceable WAVs without recompilation. Synthetic Busy remains a fallback. |
+| Administration and diagnostics | Audio CLI, read-only JSON status, optional voice-packet and Simplex diagnostics; no recording of speech content. |
+| Installation and recovery | Native Ubuntu systemd service and Docker Compose; configuration/data backups and restore/rollback procedures. |
 
-**Experimental alpha — Simplex Engine v0.2.** A working prototype is available;
-production readiness and long-term reliability have not been established.
+For example, Anna starts transmitting and listeners hear Open and noise alongside
+her speech. Ben's competing transmission is rejected and only Ben hears Busy.
+Anna's confirmed end, or an inactivity timeout, releases the channel. Ben must end
+his attempt and try again; he is not automatically granted the channel.
 
-[Deutsch](README.de.md) · [Automatic setup](docs/funk/setup.md) ·
-[Enable Simplex / update](docs/funk/simplex.md) ·
-[Verification report](docs/funk/SIMPLEX-STATUS.md)
+## Current development status
 
-## Choose an installation
+| Source | Scope |
+| --- | --- |
+| [`stable`](https://github.com/Shawna7han/mumble-funk/tree/stable) | Previous Ubuntu/Docker Simplex installation candidate, **without the new audio engine**. This is still GitHub's default branch. |
+| [`dev`](https://github.com/Shawna7han/mumble-funk/tree/dev) | Integrated Audio Engine, Squelch, Boost, packaged sounds, audio defaults, radio noise and experimental Dev installer. |
 
-| Route | Source | Operation | New installation defaults |
-| --- | --- | --- | --- |
-| Ubuntu Server 24.04 / 26.04 LTS | `stable` | Dedicated `mumble-funk` systemd service | Host 64739 TCP/UDP, Simplex enabled, timeout/retry 500/500 ms |
-| Docker Compose v2 on Linux | The same `stable` commit | Rootless container, persistent named volumes | Container 64739 TCP/UDP; host port configurable; Simplex and timeout/retry identical |
+PR #9 was merged into `dev` at
+[`a6b63175b7e94e503c410706dba87e23d861f46e`](https://github.com/Shawna7han/mumble-funk/commit/a6b63175b7e94e503c410706dba87e23d861f46e).
+Use the full Git revision in test reports: “Mumble 1.5.939” alone does not identify
+a Mumble-Funk version. Ubuntu and Docker use the same source when built from the
+same commit. See the [complete branch overview](docs/funk/development.md).
 
-[Docker installation and backup](docs/funk/docker.md) ·
-[Safe migration from the Docker feature branch](docs/funk/docker-stable-migration.md).
-Use host **64740** to run Docker alongside the native Funk server on 64739.
-Existing `.env`, project name, service and volume names remain compatible.
-Do not change the Compose project name during an update.
+| Evidence | What it establishes |
+| --- | --- |
+| Implemented | The features above are present in the integrated Dev source. |
+| Automated verification recorded before PR #9 merged | 33/33 server CTests natively and in the Docker build, 131 Python checks, and real temporary Compose tests including TCP/encrypted UDP, Simplex, effect decoding, backup/restore and image update/rollback. |
+| Operator-reported device tests | Successful native Ubuntu installation and Windows-Mumble/Android-Mumla listening tests. The documented `6f976a2` test confirmed continuous noise, repaired dropouts and Close when Windows sends and Mumla receives. |
+| Still open | Broader device/network coverage, a separate Docker listening test, target-host boot/recovery checks and a completed long-term/load test. |
 
-Both builds use Mumble 1.5.939 plus the same Funk sources. Record `git rev-parse HEAD`
-for an exact version; the Mumble version alone does not identify a Funk release.
-Audio Feedback v0.3 is **not included**.
+These are recorded results, **not a live CI badge or production-readiness claim**.
+This documentation update requires no server rebuild. Details and limits are in
+[development and verification](docs/funk/development.md#tests-und-praxiserfahrung).
 
-## Quick installation — Ubuntu 24.04 / 26.04 LTS
+## Installation
 
-Run as a normal user with **sudo access**, not as root. You need Internet access,
-at least 2 GiB RAM including swap (4 GiB RAM recommended), and 8 GiB free disk space.
+For the **current experimental Dev version**, use a separate Ubuntu Server
+**24.04 or 26.04 LTS** test VM. Start from a fresh directory as a normal sudo user:
 
 ```bash
-sudo apt update && sudo apt install -y git
-
-git clone --branch stable --recurse-submodules \
-  https://github.com/Shawna7han/mumble-funk.git
-
+git clone --branch dev --single-branch --recurse-submodules https://github.com/Shawna7han/mumble-funk.git
 cd mumble-funk
-bash scripts/funk/setup.sh
+bash scripts/funk/setup.sh --experimental-dev
 ```
 
-The setup installs missing dependencies, builds the existing source, runs all
-server tests, and deploys only after they pass. A **new installation enables
-Simplex automatically** on **64739 TCP/UDP**, with 500 ms channel and retry timeouts.
-Existing configurations, passwords, databases and certificates are preserved.
+Follow the [Dev guide](docs/funk/install-dev.md) for prerequisites, source checks,
+updates and connection details. It installs the normal `mumble-funk` service;
+there is no extra preview service. On an existing installation it updates that
+service, so use the test VM deliberately.
 
-After completion, retrieve connection details and the random access password locally:
+For **Docker from Dev**, follow the [Docker guide](docs/funk/docker.md). It builds
+locally from the Dev checkout; there is no additional audio port or automatic
+registry deployment. For **Stable without Dev audio**, use the
+[Stable setup guide](https://github.com/Shawna7han/mumble-funk/blob/stable/docs/funk/setup.md).
+Do not apply Dev audio instructions to a historical Stable checkout.
+
+| Current Dev installation | Default ports, TCP and UDP |
+| --- | --- |
+| Native Ubuntu | **64739** |
+| Docker | **Host 64740 → container 64739** |
+
+Custom host ports remain supported. Updates preserve existing `.env`, project
+names and volumes. Historical Stable Compose defaults differ; its existing port
+must be retained when migrating. See [update protection](docs/funk/docker.md#9-aktualisieren).
+
+**Prepared prebuilt-image route:** [GHCR Dev image guide (German)](docs/funk/docker-image.md).
+This feature prepares an explicitly approved publication; no image has been
+published by this development task. The existing local build remains available.
+
+## Audio defaults
+
+**Only newly created Ubuntu-setup and Docker INIs** enable all of these effects:
+
+| Setting | New-install value |
+| --- | --- |
+| `simplex`, `audiofeedback`, `busytone` | `true` |
+| `squelch`, `squelchopen`, `squelchclose` | `true` |
+| `squelchclosetimeoutfallback`, `radionoise` | `true` |
+| `busytonevolume`, `squelchopenvolume`, `squelchclosevolume` | `50` |
+| `feedbackboostdb` | `8` — Busy/Open/Close only |
+| `radionoisevolume` | `20` |
+
+Packaged WAVs are selected from `/usr/local/share/mumble-funk/audio/`:
+`busy-tone.wav`, `squelch-open.wav`, `squelch-close.wav` and `radio-noise.wav`.
+Open, Noise and Close follow one another within the effect stream; speech is
+forwarded separately without decoding, mixing or re-encoding it.
+
+**Updates do not migrate existing INIs**, including missing keys, disabled effects,
+volume zero or custom WAV selections. Missing old noise keys retain `false` /
+empty file / volume `20`; missing timeout-fallback remains `false`.
+[Defaults and compatibility](docs/funk/audio-defaults.md) · [Audio licenses](assets/audio/LICENSE.md)
+
+## Administration
+
+On native Ubuntu:
 
 ```bash
-sudo mumble-funk-info
+sudo mumble-funk-audio status
+sudo mumble-funk-info --hide-password
 ```
 
-Firewall/router rules are not changed. For an occupied port, updates, troubleshooting
-and safe removal, see the [setup guide](docs/funk/setup.md) (German). If the source
-directory already exists, use its update instructions instead of cloning over it.
+Audio status is read-only JSON, includes the configured noise values and does not
+restart the server or confirm that a WAV actually loaded. `mumble-funk-info`
+**without** `--hide-password` displays the access password; keep that output private.
+Changing audio settings can restart the service. Docker uses
+`bash scripts/docker/audio.sh status` and the existing Compose management scripts.
+See [operator commands](docs/funk/ubuntu-commands.md) and [Docker administration](docs/funk/docker.md).
 
-## Project at a glance
+## Documentation
 
-| Item | Current status |
+Operational guides are currently in German. Historical phase reports remain available.
+
+| Topic | Guide |
 | --- | --- |
-| Common installation source | [`stable`](https://github.com/Shawna7han/mumble-funk/tree/stable), candidate pending final acceptance |
-| Development | [`dev`](https://github.com/Shawna7han/mumble-funk/tree/dev); future changes through pull requests |
-| Historical Simplex / Ubuntu branch | [`funk-v0.1`](https://github.com/Shawna7han/mumble-funk/tree/funk-v0.1), unchanged |
-| Server baseline | Mumble 1.5.939, official tag `v1.5.939` |
-| Radio engine | Simplex v0.2, implemented; core default off, **new automated installations enable it** |
-| Supported installation targets | Ubuntu Server **24.04 LTS** and **26.04 LTS** |
-| Clients | Existing Mumble clients; focus on Mumla for Android and Mumble for Windows |
-| Parallel installation | Funk server on **64739 TCP/UDP**, separate from standard Mumble on 64738 |
-| License | [BSD 3-Clause](LICENSE), with existing third-party notices retained |
-
-## What works today
-
-| Feature | Implemented behavior |
-| --- | --- |
-| Exclusive transmission | One authorized sender per channel; different channels operate independently. |
-| Concurrent attempts | Atomic allocation shared by UDP and TCP prevents two simultaneous owners. |
-| Rejected transmissions | A continuously arriving rejected transmission stays blocked when the channel becomes free. A new attempt is required. |
-| End markers | A valid marker from the current owner releases the channel; another user's marker cannot release it. |
-| Configurable timeouts | Channel timeout: **500 ms** without valid new packets. Core retry default: **1,000 ms**; a new `setup.sh` installation configures **500 ms**. Both are configurable. |
-| Lifecycle handling | Channel changes, detected disconnects and loss of speaking permission release ownership. Ownership is not persisted across restarts. |
-| Transport | Incoming UDP audio and audio tunneled over TCP use the same Simplex control. |
-| Existing clients | No client modifications, protocol extensions or additional client messages are required. |
-| Server diagnostics | Optional voice-packet diagnostics and separate Simplex grant/denial/release diagnostics; metadata only, no recorded speech. |
-| Optional operation | With Simplex disabled, normal Mumble voice routing remains available. |
-
-Audio payloads are forwarded without decoding and re-encoding for the radio rules.
-Diagnostic file output runs in background threads with bounded queues; records may
-be dropped under load without changing transmission ownership.
-
-### A simple radio example
-
-1. Alice starts transmitting in a free channel. The server accepts her first
-   eligible packet and gives her the channel.
-2. Bob presses PTT while Alice is transmitting. His packets are discarded.
-3. Alice stops. Her end marker, or the configured packet timeout, releases the channel.
-4. Bob's continuing packet stream **does not automatically become audible**.
-   He must end that attempt and start a new one.
-
-The server observes packets, not physical buttons. Without an end marker, a new
-attempt is inferred only after the configured quiet interval. For initial tests,
-release PTT, wait about two seconds, then press again. A sufficiently long network
-gap can also look like a new attempt; this cannot be resolved exactly without
-client or protocol changes.
-
-## Client compatibility and test evidence
-
-| Client | Evidence so far |
-| --- | --- |
-| **Mumla — Android** | Initial operator-reported tests confirmed connection, two-way voice and PTT packet behavior. The observed transmissions continued through speaking pauses; three observed attempts had no confirmed end marker. |
-| **Mumble Desktop — Windows** | Initial operator-reported tests confirmed connection, two-way voice and PTT packet behavior, including an observed end marker on release. |
-| Other Mumble clients | The existing protocol is retained, but broad client/version compatibility has not been practically validated. |
-
-These initial observations informed the implementation. The operator has since
-reported successful initial Simplex v0.2 tests with Android-Mumla and Windows-Mumble
-on Ubuntu Server 26.04.1. This remains limited practical evidence, not a comprehensive
-client/version/network validation or a completed long-term test.
-
-The historical v0.2 verification includes **18/18 server test programs** and
-**5/5 installation tests**. Targeted Simplex and existing PTT-diagnostic tests also
-passed after the development environment was resumed. Integration tests use a real
-server process and simulated clients to check actual packet forwarding, UDP/TCP
-competition, legacy and newer packet formats, lifecycle events and disabled-mode
-routing. They do not test sound playback on an Android or Windows device.
-
-The new integration is checked separately in the [integration report](docs/funk/STABLE-INTEGRATION-STATUS.md), including the authenticated UDP nonce regression and removal of Docker test workarounds.
-
-See the [verification report](docs/funk/SIMPLEX-STATUS.md) for test dates,
-environments, coverage and remaining checks. These are recorded results, not a
-claim of continuously passing CI.
+| Development, all branches, integration evidence | [Development](docs/funk/development.md) |
+| Current Dev installation and updates | [Dev on Ubuntu](docs/funk/install-dev.md) |
+| Stable Ubuntu installation details | [Ubuntu guide](docs/funk/installation-ubuntu.md) |
+| Docker, persistent data, backup and restore | [Docker](docs/funk/docker.md) |
+| Simplex, PTT and diagnostics | [Simplex](docs/funk/simplex.md) · [Diagnostics](docs/funk/diagnose.md) |
+| Busy and synthetic fallback | [Busy Tone](docs/funk/busy-tone.md) |
+| Squelch switches, WAVs and timeout behaviour | [Squelch](docs/funk/squelch-preview.md) |
+| Shared effect stream and continuous noise | [Radio noise](docs/funk/radio-noise.md) |
+| Status, WAV selection and volumes | [Audio administration](docs/funk/ubuntu-commands.md) |
+| Audio rights and provenance | [CC0 assets](assets/audio/LICENSE.md) |
 
 ## Known limitations
 
-- **Physical PTT is not directly visible to the server.** Missing end markers,
-  delayed packets and long network interruptions can make transmission boundaries
-  ambiguous.
-- Unchanged clients have **no reliable native busy indication** for a
-  server-rejected transmission. Their local transmit indicator may still light up.
-- Rapid PTT changes are not fully optimized. Short pauses without an end marker,
-  or sequence resets, may remain blocked until enough packet silence is observed.
-- In enabled radio mode, speech stays inside the sender's current channel.
-  **Whisper, linked-channel forwarding, extra channel-listener reception and server
-  loopback do not provide alternative voice routes.** Their saved settings or
-  client UI may still exist.
-- No integrated radio audio effects, busy tone, roger beep or squelch are implemented.
-- Practical testing is limited; **no completed long-term or load test** establishes
-  production reliability.
-
-## Installation and documentation
-
-The quick commands above use the automatic setup. The existing manual installation
-guide remains available for the technical deployment details. The operational
-guides are currently **in German**. The supported installation targets are Ubuntu Server 24.04 LTS and
-26.04 LTS, including point releases.
-
-The supplied installation runs `mumble-funk.service` on **64739 TCP/UDP** with its
-own configuration, database and logs. It is designed to coexist with an existing
-standard Mumble server on 64738. Existing Mumla and Mumble clients connect to the
-additional server without modification.
-
-| Task | Guide |
-| --- | --- |
-| Docker installation, persistence, backup and recovery | [Docker guide](docs/funk/docker.md) · [Stable migration](docs/funk/docker-stable-migration.md) |
-| Automatic setup, connection details, updates and removal | [Simple setup guide](docs/funk/setup.md) |
-| Manual installation, prerequisites and systemd details | [Ubuntu installation](docs/funk/installation-ubuntu.md) |
-| Update, enable Simplex, understand settings or roll back | [Simplex v0.2 guide](docs/funk/simplex.md) |
-| Test with Android, Windows and an optional third observer | [Practical test plan](docs/funk/simplex.md#6-praxistest-mit-android-und-windows) |
-| Inspect incoming packet timing and end markers | [PTT / voice diagnostics](docs/funk/diagnose.md) |
-| Review automated verification and its limits | [Simplex verification](docs/funk/SIMPLEX-STATUS.md) · [Setup verification](docs/funk/SETUP-STATUS.md) |
-| Understand synchronization and ownership | [Server locking notes](docs/dev/MurmurLocking.md#optional-simplexcontroller-funk-v02) |
-
-**Existing installations keep their settings**, including a previously disabled
-Simplex mode. For deliberate configuration changes, use the Simplex guide.
-The manual `install.sh` path retains its opt-in default; only new installations
-through `setup.sh` automatically enable Simplex.
+- Physical PTT buttons are not visible to the server. Packet silence can also mean
+  network interruption or a speaking pause; timeout-based Close remains an inference.
+- Unchanged clients have no native server-busy indicator. Busy feedback requires
+  an Opus-capable, non-deafened client and audible local playback settings.
+- Rapid PTT changes, packet loss and client jitter buffers still need broader
+  testing. Speech and effects are separate streams, not sample-synchronized audio.
+- Simplex routes accepted speech within the current channel; whisper, linked-channel,
+  extra channel-listener and server-loopback routes are not alternative radio paths.
+- Practical evidence is limited. Neither Dev nor the older Stable candidate is
+  presented as a generally production-ready radio system.
 
 ## Roadmap
 
-| Stage | Scope |
-| --- | --- |
-| **Implemented** | Simplex Engine v0.2, optional diagnostics, Ubuntu setup and Docker Compose from a common commit. |
-| **Current development goals** | Broader real-device tests; improve rapid PTT changes within protocol limits; examine packet loss, delayed packets and network outages; strengthen stability and reliability through longer runs. |
-| **Possible future work — not committed** | Busy tone, roger beep, analog radio audio effects, squelch, digital radio profiles and extended configuration. |
-
-Future ideas are exploratory. They have no promised delivery date or guaranteed
-implementation and are not features of the current prototype.
-
-## Contributing and reporting issues
-
-Report fork-specific problems in [Mumble-Funk issues](https://github.com/Shawna7han/mumble-funk/issues).
-Include the server commit, client/platform versions, enabled settings and steps to
-reproduce the behavior. Diagnostic excerpts can help; remove passwords and personal
-information before sharing them. See the [commit guidelines](COMMIT_GUIDELINES.md)
-for code contributions.
+Implemented: Simplex, Busy, Squelch Open/Close, timeout fallback, audio controls,
+continuous noise, common effect stream, Ubuntu and Docker administration.
+Current priorities are wider real-device/network tests, reliable fast PTT changes,
+Docker listening tests and longer stability runs. Roger Beep, digital radio
+profiles and optional future mixing are **ideas without a delivery commitment**.
+Squelch and continuous noise are already implemented, not future promises.
 
 ## Upstream and license
 
-Mumble-Funk is an **independent project**, derived from
-[Mumble](https://github.com/mumble-voip/mumble). It is not an official Mumble release
-and does not claim endorsement or support from the original Mumble developers.
-The upstream project's website is [mumble.info](https://www.mumble.info/).
+Mumble-Funk is independent of [Mumble](https://github.com/mumble-voip/mumble).
+It is not an official Mumble release and does not claim endorsement or support
+from the original developers. Upstream website: [mumble.info](https://www.mumble.info/).
 
 > Copyright (C) 2005-2022 The Mumble Developers
 >
 > All rights reserved.
 
-The source is distributed under the terms in [LICENSE](LICENSE) (BSD 3-Clause).
-Original copyright and license notices remain in place. Bundled components retain
-their own terms; see [3rdPartyLicenses](3rdPartyLicenses/) and the notices in the
-respective source files and submodules.
+Source terms: [LICENSE](LICENSE) (BSD 3-Clause). Original copyright notices and
+component licenses are retained; see [3rdPartyLicenses](3rdPartyLicenses/) and
+submodule notices. The packaged recordings have separate [CC0 1.0 Universal terms](assets/audio/LICENSE.md).

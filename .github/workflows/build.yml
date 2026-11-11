@@ -18,7 +18,7 @@ jobs:
       - name: Install server dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config python3 qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libboost-dev libssl-dev libprotobuf-dev protobuf-compiler libprotoc-dev libcap-dev libavahi-compat-libdnssd-dev libzeroc-ice-dev
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config python3 qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libboost-dev libssl-dev libopus-dev libprotobuf-dev protobuf-compiler libprotoc-dev libcap-dev libavahi-compat-libdnssd-dev libzeroc-ice-dev
       - name: Build server and protocol probe
         run: |
           cmake -S . -B build/funk -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_NUMBER=939 -Dclient=OFF -Dserver=ON -Dtests=ON -Dplugins=OFF -Doverlay=OFF -Dlto=OFF -DCMAKE_UNITY_BUILD=OFF -DCMAKE_PROJECT_mumble_INCLUDE="$PWD/scripts/docker/tests/register.cmake"
@@ -27,7 +27,25 @@ jobs:
         run: |
           ctest --test-dir build/funk --output-on-failure
           python3 tests/funk-install/test_install.py build/funk/mumble-server
+          python3 tests/funk-install/test_audio_assets.py build/funk/mumble-server
+          python3 tests/funk-install/test_audio_preview.py build/funk/mumble-server
+          python3 tests/funk-install/test_squelch_admin.py build/funk/mumble-server
+          python3 tests/funk-install/test_audio_boost.py build/funk/mumble-server
+          python3 tests/funk-install/test_audio_defaults.py build/funk/mumble-server build/funk/FunkDockerProbe
+          python3 tests/funk-install/test_radio_noise_install.py build/funk/mumble-server
       - name: Build Docker image (includes server and runtime tests)
-        run: docker compose build
+        run: |
+          # A checkout made with umask 0077 must work for runtime UID 10001 too.
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          files = list(Path('assets/audio').glob('*')) + [
+              Path('scripts/funk/audio.py'), Path('scripts/funk/audio-preview/audio_control.py')]
+          for path in files:
+              if path.is_file():
+                  path.chmod(path.stat().st_mode & 0o700)
+          PYTHON
+          docker compose build
       - name: Verify TCP/UDP, Simplex, persistence and recovery
-        run: python3 scripts/docker/tests/integration.py --probe "$PWD/build/funk/FunkDockerProbe" --native-server "$PWD/build/funk/mumble-server"
+        run: python3 scripts/docker/tests/integration.py --probe "$PWD/build/funk/FunkDockerProbe" --native-server "$PWD/build/funk/mumble-server" --audio-feedback --radio-noise --host-port 64740
+      - name: Verify prebuilt image Compose, migration and rollback
+        run: python3 scripts/docker/tests/integration.py --probe "$PWD/build/funk/FunkDockerProbe" --native-server "$PWD/build/funk/mumble-server" --compose-file "$PWD/compose.ghcr.yaml" --previous-image mumble-funk-docker:local --audio-feedback --radio-noise --host-port 64740

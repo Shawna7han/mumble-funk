@@ -1,4 +1,7 @@
 """Unit checks for Docker-only lifecycle logic, with temporary directories."""
+import contextlib
+import hashlib
+import json
 import importlib.util
 import io
 import os
@@ -24,8 +27,8 @@ class RuntimeTests(unittest.TestCase):
         self.calls=[]
         def initialize_database(args,**kwargs):
             self.calls.append(args)
-            with sqlite3.connect(self.runtime.DATABASE) as db:
-                db.execute('CREATE TABLE config(server_id INTEGER,key TEXT,value TEXT)')
+            with contextlib.closing(sqlite3.connect(self.runtime.DATABASE)) as db:
+                db.execute('CREATE TABLE config(server_id INTEGER,key TEXT,value TEXT)');db.commit()
             return type('Result',(),{'returncode':0})()
         self.database=patch.object(self.runtime.subprocess,'run',side_effect=initialize_database)
         self.database.start();self.addCleanup(self.database.stop)
@@ -34,10 +37,93 @@ class RuntimeTests(unittest.TestCase):
         self.runtime.initialize();original=self.runtime.CONFIG.read_bytes()
         values=self.runtime.settings()
         self.assertEqual(values['simplex'],'true');self.assertEqual(values['simplexretrytimeout'],'500')
+        self.assertEqual(values['squelch'],'true');self.assertEqual(values['audiofeedback'],'true')
+        self.assertEqual(values['squelchopen'],'true');self.assertEqual(values['squelchclose'],'true')
+        self.assertEqual(values['squelchclosetimeoutfallback'],'true')
+        self.assertEqual(values['feedbackboostdb'],'8')
+        self.assertEqual((values['radionoise'],values['radionoisefile'],values['radionoisevolume']),('true','/usr/local/share/mumble-funk/audio/radio-noise.wav','20'))
+        self.assertEqual(values['busytonefile'],'/usr/local/share/mumble-funk/audio/busy-tone.wav')
+        self.assertEqual(values['squelchopenfile'],'/usr/local/share/mumble-funk/audio/squelch-open.wav')
         self.assertEqual(len(values['serverpassword']),48);self.assertNotIn('serverpassword=',str(self.calls))
         self.assertEqual(self.runtime.CONFIG.stat().st_mode & 0o777,0o600)
         self.assertIn('-disablesu',self.calls[0])
         self.runtime.initialize();self.assertEqual(self.runtime.CONFIG.read_bytes(),original);self.assertEqual(len(self.calls),1)
+
+    def test_existing_synthetic_missing_or_custom_busy_selection_never_migrates(self):
+        self.runtime.initialize()
+        original=self.runtime.CONFIG.read_text()
+        for selection in ('', '/var/lib/mumble-funk/audio/own.wav', None):
+            text=original.replace('busytonefile=/usr/local/share/mumble-funk/audio/busy-tone.wav\n',
+                                  '' if selection is None else 'busytonefile='+selection+'\n')
+            self.runtime.CONFIG.write_text(text)
+            before=self.runtime.CONFIG.read_bytes()
+            self.runtime.initialize()
+            self.assertEqual(self.runtime.CONFIG.read_bytes(),before)
+
+    def test_legacy_missing_disabled_and_custom_audio_survive_initialize_and_restore(self):
+        self.runtime.initialize()
+        original=self.runtime.CONFIG.read_text()
+        audio_keys=('audiofeedback','squelch','squelchopen','squelchclose','busytone','feedbackboostdb',
+                    'busytonefile','busytonevolume','squelchopenvolume','squelchclosevolume','squelchclosetimeoutfallback')
+        missing='\n'.join(line for line in original.splitlines() if not line.startswith(tuple(k+'=' for k in audio_keys)))+'\n'
+        variants=[missing, original.replace('audiofeedback=true','audiofeedback=false')
+                  .replace('squelch=true','squelch=false').replace('feedbackboostdb=8','feedbackboostdb=0')
+                  .replace('squelchclosetimeoutfallback=true','squelchclosetimeoutfallback=false'),
+                  original.replace('busytonevolume=50','busytonevolume=0').replace('feedbackboostdb=8','feedbackboostdb=12')
+                  .replace('busytonefile=/usr/local/share/mumble-funk/audio/busy-tone.wav',
+                           'busytonefile=/var/lib/mumble-funk/audio/own.wav')]
+        own=self.runtime.DIRECTORIES['state']/'audio/own.wav'
+        own.write_bytes((SOURCE.parents[2]/'assets/audio/busy-tone.wav').read_bytes())
+        for text in variants:
+            self.runtime.CONFIG.write_text(text)
+            before=self.runtime.CONFIG.read_bytes();audio=own.read_bytes()
+            self.runtime.initialize()
+            self.assertEqual(self.runtime.CONFIG.read_bytes(),before)
+            target=self.empty_target()
+            with patch.object(target.sys,'stdin',types.SimpleNamespace(buffer=io.BytesIO(self.capture_backup()))):
+                target.restore()
+            self.assertEqual(target.CONFIG.read_bytes(),before)
+            self.assertEqual((target.DIRECTORIES['state']/'audio/own.wav').read_bytes(),audio)
+            import shutil
+            shutil.rmtree(self.root/'restored')
+
+    def test_audio_rollback_revision_guard_lock_and_exact_bytes(self):
+        self.runtime.initialize()
+        original=self.runtime.CONFIG.read_bytes()
+        backup=self.runtime.CONFIG.with_name('server.ini.before-audio-change')
+        backup.write_bytes(original)
+        self.runtime.CONFIG.write_bytes(original.replace(b'radionoise=true',b'radionoise=false'))
+        revision=hashlib.sha256(self.runtime.CONFIG.read_bytes()).hexdigest()
+        with self.runtime.instance_lock():
+            with self.assertRaises(RuntimeError):self.runtime.rollback_audio(revision)
+        with self.assertRaises(RuntimeError):self.runtime.rollback_audio('f'*64)
+        with self.assertRaises(RuntimeError):self.runtime.rollback_audio('../unsafe')
+        self.runtime.rollback_audio(revision)
+        self.assertEqual(self.runtime.CONFIG.read_bytes(),original)
+        self.assertEqual(self.runtime.CONFIG.stat().st_mode & 0o777,0o600)
+        backup.unlink();backup.symlink_to(self.runtime.CONFIG)
+        with self.assertRaises(RuntimeError):self.runtime.rollback_audio(hashlib.sha256(original).hexdigest())
+
+    def test_noise_backup_restore_and_existing_missing_settings_preserved(self):
+        import wave
+        self.runtime.initialize()
+        path=self.runtime.DIRECTORIES['state']/'audio/radio-noise.wav'
+        with wave.open(str(path),'wb') as wav:
+            wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(48000)
+            wav.writeframes(b'\x00\x01'*96000)
+        for selection in (b'radionoise=true\nradionoisefile=/var/lib/mumble-funk/audio/radio-noise.wav\nradionoisevolume=37\n',
+                          b'radionoise=false\nradionoisefile=/var/lib/mumble-funk/audio/radio-noise.wav\nradionoisevolume=0\n', b''):
+            lines=self.runtime.CONFIG.read_bytes().splitlines(keepends=True)
+            text=b''.join(line for line in lines if not line.startswith((b'radionoise=',b'radionoisefile=',b'radionoisevolume=')))+selection
+            self.runtime.CONFIG.write_bytes(text);audio=path.read_bytes()
+            self.runtime.initialize();self.assertEqual(self.runtime.CONFIG.read_bytes(),text)
+            target=self.empty_target()
+            with patch.object(target.sys,'stdin',types.SimpleNamespace(buffer=io.BytesIO(self.capture_backup()))):target.restore()
+            self.assertEqual(target.CONFIG.read_bytes(),text)
+            self.assertEqual((target.DIRECTORIES['state']/'audio/radio-noise.wav').read_bytes(),audio)
+            import shutil
+            shutil.rmtree(self.root/'restored')
+
 
     def test_missing_config_never_resets_existing_database(self):
         self.runtime.DATABASE.write_bytes(b'protected')
@@ -56,9 +142,15 @@ class RuntimeTests(unittest.TestCase):
                 self.runtime.configure('simplex','false')
 
     def test_configuration_changes_preserved(self):
-        self.runtime.initialize();password=self.runtime.settings()['serverpassword']
+        self.runtime.initialize();initial=self.runtime.settings();password=initial['serverpassword']
+        self.runtime.CONFIG.write_text(self.runtime.CONFIG.read_text().replace('feedbackboostdb=8', 'feedbackboostdb=9'))
         self.runtime.configure('simplexdiagnostics','false');self.runtime.configure('simplextimeout','700')
         self.runtime.initialize();values=self.runtime.settings()
+        self.assertEqual(values['feedbackboostdb'],'9')
+        output=io.StringIO()
+        with contextlib.redirect_stdout(output): self.runtime.info(as_json=True)
+        self.assertEqual(json.loads(output.getvalue()), dict(initial, feedbackboostdb='9',
+                         simplexdiagnostics='false', simplextimeout='700'))
         self.assertEqual(values['simplexdiagnostics'],'false');self.assertEqual(values['simplextimeout'],'700')
         self.assertEqual(values['serverpassword'],password)
         with self.assertRaises(RuntimeError):self.runtime.configure('database','/etc/foreign.sqlite')

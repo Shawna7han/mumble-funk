@@ -1,0 +1,9 @@
+add_executable(TestAudioFeedbackIntegration TestAudioFeedbackIntegration.cpp)
+set_target_properties(TestAudioFeedbackIntegration PROPERTIES AUTOMOC ON)
+target_link_libraries(TestAudioFeedbackIntegration PRIVATE shared Qt5::Test audio-feedback)
+add_test(NAME TestAudioFeedbackIntegration COMMAND $<TARGET_FILE:TestAudioFeedbackIntegration>)
+set_tests_properties(TestAudioFeedbackIntegration PROPERTIES TIMEOUT 120)
+target_compile_definitions(TestAudioFeedbackIntegration PRIVATE MUMBLE_SERVER_PATH="$<TARGET_FILE:mumble-server>")
+add_dependencies(TestAudioFeedbackIntegration mumble-server)
+
+target_compile_definitions(TestAudioFeedbackIntegration PRIVATE BUSY_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/audio")

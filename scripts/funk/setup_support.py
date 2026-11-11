@@ -188,7 +188,7 @@ class Installation:
                         "simplexlogmaxsize": "10485760", "simplexloggrants": "true",
                         "simplexlogdenials": "true", "simplexlogreleases": "true"}
             for key, value in settings.items():
-                text, count = re.subn(rf"(?m)^#{key}=.*$", f"{key}={value}", text)
+                text, count = re.subn(rf"(?m)^#?{key}=.*$", f"{key}={value}", text)
                 if count != 1:
                     raise SetupError(f"INI-Vorlage enthält keinen eindeutigen Platzhalter für {key}.")
         # Publish a complete private file atomically; do not replace an existing one.
@@ -258,6 +258,13 @@ class Installation:
         print("========================================")
         print("Server:        Mumble-Funk")
         print("Version:       Simplex v0.2 / Mumble 1.5.939")
+        build_info = self.path('/opt/mumble-funk/current/BUILD-INFO')
+        if build_info.is_file():
+            fields = dict(line.split('=', 1) for line in build_info.read_text().splitlines() if '=' in line)
+            if fields.get('experimental') == 'true':
+                print('Entwicklung:   EXPERIMENTELL — Squelch, keine Stable-Freigabe')
+            if re.fullmatch(r'[0-9a-f]{40}', fields.get('revision', '')):
+                print('Git-Revision:  '+fields['revision'])
         print(f"Betrieb:       {'Aktiv' if status == 'active' else 'Nicht aktiv'}")
         print(f"Simplex:       {'Aktiviert' if enabled else 'Deaktiviert (bestehende Einstellung erhalten)'}")
         print(f"IP-Adresse(n): {', '.join(dict.fromkeys(candidates)) or 'Nicht eindeutig erkannt; IP der Ubuntu-VM verwenden.'}")

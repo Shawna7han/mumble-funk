@@ -45,6 +45,7 @@ struct Received {
 
 class Client {
 public:
+	using Message = QPair< Type, QByteArray >;
 	QSslSocket socket;
 	QUdpSocket udp;
 	CryptStateOCB2 crypt;
@@ -63,13 +64,20 @@ public:
 		return sendRaw(type, QByteArray::fromStdString(message.SerializeAsString()));
 	}
 	bool receive(Type type, QByteArray &data, std::function< bool(const QByteArray &) > predicate = {},
-				 int timeout = 4000) {
+				 int timeout = 4000, QList< Message > *preceding = nullptr) {
 		QElapsedTimer timer;
 		timer.start();
 		do {
 			pump();
 			for (int i = 0; i < inbox.size(); ++i) {
 				if (inbox.at(i).first == type && (!predicate || predicate(inbox.at(i).second))) {
+					// Optional wire-order snapshot up to this exact acknowledgement.
+					if (preceding) {
+						while (i > 0) {
+							preceding->append(inbox.takeFirst());
+							--i;
+						}
+					}
 					data = inbox.takeAt(i).second;
 					return true;
 				}
@@ -78,14 +86,23 @@ public:
 		} while (timer.elapsed() < timeout);
 		return false;
 	}
-	bool barrier() {
+	void discard(Type type, const std::function< bool(const QByteArray &) > &predicate) {
+		pump();
+		for (int i = 0; i < inbox.size();) {
+			if (inbox.at(i).first == type && predicate(inbox.at(i).second))
+				inbox.removeAt(i);
+			else
+				++i;
+		}
+	}
+	bool barrier(QList< Message > *preceding = nullptr) {
 		MumbleProto::Ping ping;
 		ping.set_timestamp(++m_barrier);
 		QByteArray data;
 		return send(Type::Ping, ping) && receive(Type::Ping, data, [&](const QByteArray &bytes) {
 				   MumbleProto::Ping reply;
 				   return reply.ParseFromArray(bytes.data(), bytes.size()) && reply.timestamp() == m_barrier;
-			   });
+			   }, 4000, preceding);
 	}
 	bool login(quint16 serverPort, const std::string &name, bool modern = false) {
 		port    = serverPort;
@@ -252,7 +269,8 @@ struct Fixture {
 	ServerProcess server;
 	quint16 port = 0;
 	QString config;
-	bool start(const QString &setting, int timeout = 2500, int retry = 3000, bool diagnostics = true) {
+	bool start(const QString &setting, int timeout = 2500, int retry = 3000, bool diagnostics = true,
+			   const QByteArray &extra = {}) {
 		QTcpServer reservation;
 		if (!reservation.listen(QHostAddress::LocalHost, 0))
 			return false;
@@ -272,6 +290,7 @@ struct Fixture {
 			+ "\nvoicediagnostics=true\nvoicediagnosticsfile=" + directory.filePath("voice").toUtf8() + "\n";
 		if (!setting.isEmpty())
 			ini += "simplex=" + setting.toUtf8() + '\n';
+		ini += extra;
 		if (file.write(ini) != ini.size())
 			return false;
 		file.close();

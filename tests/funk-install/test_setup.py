@@ -168,10 +168,11 @@ if name=='df':
     print('Filesystem 1024-blocks Used Available Capacity Mounted')
     print('test 33554432 1000 '+os.environ.get('MOCK_FREE_KIB','16777216')+' 1% /')
 elif name=='git':
-    if '--show-current' in args: print('funk-v0.1')
+    if '--show-current' in args: print(os.environ.get('MOCK_BRANCH','funk-v0.1'))
     elif 'config' in args: print('https://github.com/Shawna7han/mumble-funk.git')
     elif '--git-path' in args: print(repo/'.git/funk-setup.lock')
     elif 'rev-parse' in args: print('a'*40)
+    elif 'ls-remote' in args: print('a'*40+'\trefs/heads/'+os.environ.get('MOCK_BRANCH','feature/squelch-audio'))
     if 'submodule' in args and fail=='network': sys.exit(128)
 elif name=='systemctl': print('259')
 elif name=='dpkg-query':
@@ -208,6 +209,7 @@ class OrchestrationTests(unittest.TestCase):
         self.repo = Path(self.temp.name) / "repo"
         self.repo.mkdir()
         shutil.copytree(REPO / "scripts", self.repo / "scripts")
+        shutil.copytree(REPO / "assets/audio", self.repo / "assets/audio")
         (self.repo / ".git").mkdir()
         (self.repo / "test-os-release").write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
         (self.repo / "test-meminfo").write_text("MemTotal: 8388608 kB\nSwapTotal: 0 kB\n")
@@ -260,6 +262,229 @@ class OrchestrationTests(unittest.TestCase):
         base = self.repo / "stage/opt/mumble-funk"
         for directory in (base, base / "releases", (base / "current").resolve()):
             self.assertEqual(directory.stat().st_mode & 0o777, 0o755, str(directory))
+
+    def test_experimental_ubuntu24_install_requires_and_forwards_opt_in(self):
+        self.env['MOCK_BRANCH'] = 'feature/squelch-audio'
+        (self.repo / 'test-os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        refused = self.execute()
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('--experimental-squelch', refused.stderr)
+        self.assertFalse((self.repo / 'stage/etc/mumble-funk/server.ini').exists())
+        result = self.execute(args=('--experimental-squelch',))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('EXPERIMENTELL', result.stderr)
+        installers = [call for call in self.calls() if call[0] == 'sudo' and any(arg.endswith('install.sh') for arg in call)]
+        self.assertTrue(installers)
+        self.assertIn('--experimental-squelch', installers[-1])
+        info = (self.repo / 'stage/opt/mumble-funk/current/BUILD-INFO').read_text()
+        self.assertIn('experimental=true', info)
+
+    def test_dev_ubuntu24_opt_in_and_update_preserve_existing_state(self):
+        self.env['MOCK_BRANCH'] = 'dev'
+        (self.repo / 'test-os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        for args in ((), ('--experimental-audio-defaults',)):
+            refused = self.execute(args=args)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn('--experimental-dev', refused.stderr)
+            self.assertFalse((self.repo / 'stage').exists())
+            self.assertFalse(any(c[0] in ('cmake', 'apt-get', 'sudo') for c in self.calls()))
+        result = self.execute(args=('--experimental-dev',))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('EXPERIMENTELL: dev-Testinstallation', result.stderr)
+        # Build runs the same guard a second time, proving setup forwarded opt-in.
+        self.assertGreaterEqual(result.stderr.count('dev-Testinstallation'), 2)
+        installers = [c for c in self.calls() if c[0] == 'sudo' and any(a.endswith('install.sh') for a in c)]
+        self.assertIn('--experimental-dev', installers[-1])
+        info = (self.repo / 'stage/opt/mumble-funk/current/BUILD-INFO').read_text()
+        self.assertIn('branch=dev\n', info)
+        self.assertIn('revision=' + 'a' * 40 + '\n', info)
+        self.assertIn('experimental=true\n', info)
+        config = self.repo / 'stage/etc/mumble-funk/server.ini'
+        config.write_text(config.read_text().replace('audiofeedback=true', 'audiofeedback=false')
+                          .replace('squelchclosetimeoutfallback=true\n', ''))
+        database = self.repo / 'stage/var/lib/mumble-funk/server.sqlite'
+        with contextlib.closing(sqlite3.connect(database)) as db:
+            db.execute('CREATE TABLE config (server_id INTEGER, key TEXT, value TEXT)')
+            db.execute("INSERT INTO config VALUES (1, 'port', '64739')")
+            db.commit()
+        custom_wav = self.repo / 'stage/etc/mumble-funk/sounds/custom.wav'
+        custom_wav.write_bytes(b'preserved custom audio')
+        before = {p: p.read_bytes() for p in (config, database, custom_wav)}
+        result = self.execute(args=('--experimental-dev',))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes(), content, str(path))
+
+    def test_direct_dev_build_requires_opt_in_before_cmake(self):
+        self.env['MOCK_BRANCH'] = 'dev'
+        command = ['bash', str(self.repo / 'scripts/funk/build.sh')]
+        refused = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('--experimental-dev', refused.stderr)
+        self.assertFalse(any(c[0] in ('cmake', 'ctest') for c in self.calls()))
+        result = subprocess.run(command + ['--experimental-dev'], env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(any(c[0] == 'cmake' and '--build' in c for c in self.calls()))
+        self.assertTrue(any(c[0] == 'ctest' for c in self.calls()))
+        self.assertIn('install.sh --experimental-dev', result.stdout)
+
+    def test_radio_noise_ubuntu24_opt_in_and_update_without_private_asset(self):
+        self.env['MOCK_BRANCH'] = 'feature/radio-noise'
+        (self.repo / 'test-os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        for args in ((), ('--experimental-dev',), ('--experimental-squelch',)):
+            refused = self.execute(args=args)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn('--experimental-radio-noise', refused.stderr)
+            self.assertFalse((self.repo / 'stage').exists())
+            self.assertFalse(any(c[0] in ('cmake', 'apt-get', 'sudo') for c in self.calls()))
+        result = self.execute(args=('--experimental-radio-noise',))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(result.stderr.count('EXPERIMENTELL: Audio-Vorschau'), 2)
+        installers = [c for c in self.calls() if c[0] == 'sudo' and any(a.endswith('install.sh') for a in c)]
+        self.assertIn('--experimental-radio-noise', installers[-1])
+        root = self.repo / 'stage'
+        info = (root / 'opt/mumble-funk/current/BUILD-INFO').read_text()
+        self.assertIn('branch=feature/radio-noise\n', info)
+        self.assertIn('experimental=true\n', info)
+        config = root / 'etc/mumble-funk/server.ini'
+        self.assertIn('radionoise=true\n', config.read_text())
+        self.assertEqual((root/'usr/local/share/mumble-funk/audio/radio-noise.wav').read_bytes(),
+                         (REPO/'assets/audio/radio-noise.wav').read_bytes())
+        config.write_text(config.read_text().replace('audiofeedback=true', 'audiofeedback=false')
+                          .replace('radionoise=true', 'radionoise=false')
+                          .replace('radionoisefile=/usr/local/share/mumble-funk/audio/radio-noise.wav',
+                                   'radionoisefile=/etc/mumble-funk/sounds/radio-noise.wav')
+                          .replace('radionoisevolume=20', 'radionoisevolume=10'))
+        database = root / 'var/lib/mumble-funk/server.sqlite'
+        with contextlib.closing(sqlite3.connect(database)) as db:
+            db.execute('CREATE TABLE config (server_id INTEGER, key TEXT, value TEXT)')
+            db.commit()
+        own = root / 'etc/mumble-funk/sounds/radio-noise.wav'
+        own.write_bytes(b'operator audio fixture')
+        before = {p: p.read_bytes() for p in (config, database, own)}
+        result = self.execute(args=('--experimental-radio-noise',))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes(), content, str(path))
+
+    def test_direct_radio_noise_build_and_install_require_and_forward_opt_in(self):
+        self.env['MOCK_BRANCH'] = 'feature/radio-noise'
+        installer = self.repo / 'scripts/funk/install.sh'
+        installer.write_text(installer.read_text()
+                             .replace('[[ $EUID == 0 ]]', 'true')
+                             .replace('. /etc/os-release', '. "$repo/test-os-release"')
+                             .replace('/run/lock/mumble-funk-install.lock', str(self.repo / 'install.lock')))
+        flock = self.repo / 'mock-bin/flock'
+        flock.write_text('#!/bin/sh\necho TEST_STOP_AFTER_SOURCE_GUARD >&2\nexit 73\n')
+        flock.chmod(0o755)
+        for name in ('build.sh', 'install.sh'):
+            command = ['bash', str(self.repo / 'scripts/funk' / name)]
+            refused = subprocess.run(command, env=self.env, capture_output=True, text=True)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn('--experimental-radio-noise', refused.stderr)
+            result = subprocess.run(command + ['--experimental-radio-noise'], env=self.env,
+                                    capture_output=True, text=True)
+            if name == 'build.sh':
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('install.sh --experimental-radio-noise', result.stdout)
+            else:
+                self.assertIn('TEST_STOP_AFTER_SOURCE_GUARD', result.stderr)
+            self.assertIn('EXPERIMENTELL', result.stderr)
+        self.assertFalse((self.repo / 'stage').exists())
+
+    def test_direct_dev_install_forwards_opt_in_to_source_guard(self):
+        self.env['MOCK_BRANCH'] = 'dev'
+        installer = self.repo / 'scripts/funk/install.sh'
+        # Exercise production parsing/guard in this disposable copy, as a normal
+        # user. Stop at the lock immediately after validation, before deployment.
+        installer.write_text(installer.read_text()
+                             .replace('[[ $EUID == 0 ]]', 'true')
+                             .replace('. /etc/os-release', '. "$repo/test-os-release"')
+                             .replace('/run/lock/mumble-funk-install.lock',
+                                      str(self.repo / 'install.lock')))
+        flock = self.repo / 'mock-bin/flock'
+        flock.write_text('#!/bin/sh\necho TEST_STOP_AFTER_SOURCE_GUARD >&2\nexit 73\n')
+        flock.chmod(0o755)
+        command = ['bash', str(installer)]
+        for args in ((), ('--experimental-audio-defaults',)):
+            result = subprocess.run(command + list(args), env=self.env,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn('--experimental-dev', result.stderr)
+            self.assertFalse((self.repo / 'install.lock').exists())
+        result = subprocess.run(command + ['--experimental-dev'], env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('TEST_STOP_AFTER_SOURCE_GUARD', result.stderr)
+        self.assertIn('EXPERIMENTELL: dev-Testinstallation', result.stderr)
+        self.assertFalse((self.repo / 'stage').exists())
+
+    def test_audio_volume_ubuntu24_install_and_update_preserve_boost(self):
+        self.env['MOCK_BRANCH'] = 'feature/audio-volume'
+        (self.repo/'test-os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        for args in ((), ('--experimental-squelch',)):
+            result = self.execute(args=args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('--experimental-audio-volume', result.stderr)
+            self.assertFalse((self.repo/'stage/etc/mumble-funk/server.ini').exists())
+        result = self.execute(args=('--experimental-audio-volume',))
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        installers = [c for c in self.calls() if c[0]=='sudo' and any(a.endswith('install.sh') for a in c)]
+        self.assertIn('--experimental-audio-volume', installers[-1])
+        info = (self.repo/'stage/opt/mumble-funk/current/BUILD-INFO').read_text()
+        self.assertIn('branch=feature/audio-volume', info)
+        self.assertIn('experimental=true', info)
+        config = self.repo/'stage/etc/mumble-funk/server.ini'
+        self.assertIn('feedbackboostdb=8\n', config.read_text())
+        config.write_text(config.read_text().replace('feedbackboostdb=8', 'feedbackboostdb=9'))
+        original = config.read_bytes()
+        result = self.execute(args=('--experimental-audio-volume',))
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual(config.read_bytes(), original)
+
+    def test_busy_asset_experimental_install_and_legacy_selection_preservation(self):
+        self.env['MOCK_BRANCH']='feature/busy-tone-asset'
+        (self.repo/'test-os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        for args in ((), ('--experimental-squelch',), ('--experimental-audio-volume',)):
+            result=self.execute(args=args)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('--experimental-busy-tone',result.stderr)
+            self.assertFalse((self.repo/'stage/etc/mumble-funk/server.ini').exists())
+        result=self.execute(args=('--experimental-busy-tone',))
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        config=self.repo/'stage/etc/mumble-funk/server.ini'
+        self.assertIn('busytonefile=/usr/local/share/mumble-funk/audio/busy-tone.wav\n',config.read_text())
+        info=(self.repo/'stage/opt/mumble-funk/current/BUILD-INFO').read_text()
+        self.assertIn('branch=feature/busy-tone-asset',info);self.assertIn('experimental=true',info)
+        installers=[c for c in self.calls() if c[0]=='sudo' and any(a.endswith('install.sh') for a in c)]
+        self.assertIn('--experimental-busy-tone',installers[-1])
+        config.write_text(config.read_text().replace('busytonefile=/usr/local/share/mumble-funk/audio/busy-tone.wav','busytonefile='))
+        original=config.read_bytes()
+        result=self.execute(args=('--experimental-busy-tone',))
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(config.read_bytes(),original)
+
+    def test_audio_defaults_ubuntu24_requires_own_flag_and_preserves_disabled_update(self):
+        self.env['MOCK_BRANCH']='feature/audio-defaults'
+        (self.repo/'test-os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        for args in ((), ('--experimental-busy-tone',)):
+            result=self.execute(args=args)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('--experimental-audio-defaults',result.stderr)
+        result=self.execute(args=('--experimental-audio-defaults',))
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        config=self.repo/'stage/etc/mumble-funk/server.ini'
+        for line in ('simplex=true', 'audiofeedback=true', 'squelch=true', 'feedbackboostdb=8'):
+            self.assertIn(line+'\n',config.read_text())
+        info=(self.repo/'stage/opt/mumble-funk/current/BUILD-INFO').read_text()
+        self.assertIn('branch=feature/audio-defaults',info);self.assertIn('experimental=true',info)
+        config.write_text(config.read_text().replace('audiofeedback=true','audiofeedback=false')
+                          .replace('squelch=true','squelch=false').replace('feedbackboostdb=8\n',''))
+        before=config.read_bytes()
+        result=self.execute(args=('--experimental-audio-defaults',))
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(config.read_bytes(),before)
 
     def test_failure_before_deployment(self):
         for failure in ("apt-update", "apt-install", "build", "tests", "network"):

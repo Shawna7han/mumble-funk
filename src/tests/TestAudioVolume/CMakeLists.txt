@@ -1,0 +1,6 @@
+add_executable(TestAudioVolume TestAudioVolume.cpp)
+set_target_properties(TestAudioVolume PROPERTIES AUTOMOC ON)
+target_link_libraries(TestAudioVolume PRIVATE shared Qt5::Test audio-feedback)
+target_compile_definitions(TestAudioVolume PRIVATE AUDIO_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/audio")
+add_test(NAME TestAudioVolume COMMAND $<TARGET_FILE:TestAudioVolume>)
+set_tests_properties(TestAudioVolume PROPERTIES TIMEOUT 120)

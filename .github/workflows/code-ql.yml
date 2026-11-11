@@ -23,7 +23,7 @@ jobs:
       - name: Install server dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libboost-dev libssl-dev libprotobuf-dev protobuf-compiler libprotoc-dev libcap-dev libavahi-compat-libdnssd-dev libzeroc-ice-dev
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libboost-dev libssl-dev libopus-dev libprotobuf-dev protobuf-compiler libprotoc-dev libcap-dev libavahi-compat-libdnssd-dev libzeroc-ice-dev
       - name: Build server only
         run: |
           cmake -S . -B build/scan -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_NUMBER=939 -Dclient=OFF -Dserver=ON -Dtests=OFF -Dplugins=OFF -Doverlay=OFF -Dlto=OFF -DCMAKE_UNITY_BUILD=OFF

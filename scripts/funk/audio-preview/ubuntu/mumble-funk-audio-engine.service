@@ -1,0 +1,28 @@
+[Unit]
+Description=Mumble-Funk experimental Audio Engine Phase 1
+After=network.target
+
+[Service]
+Type=simple
+User=mumble-funk-audio-engine
+Group=mumble-funk-audio-engine
+WorkingDirectory=/var/lib/mumble-funk-audio-engine
+ExecStart=/opt/mumble-funk-audio-engine/current/mumble-server -ini /etc/mumble-funk-audio-engine/server.ini -fg
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+StateDirectory=mumble-funk-audio-engine
+StateDirectoryMode=0750
+LogsDirectory=mumble-funk-audio-engine
+LogsDirectoryMode=0750
+StandardOutput=append:/var/log/mumble-funk-audio-engine/server.log
+StandardError=inherit
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/mumble-funk-audio-engine /var/log/mumble-funk-audio-engine
+
+[Install]
+WantedBy=multi-user.target

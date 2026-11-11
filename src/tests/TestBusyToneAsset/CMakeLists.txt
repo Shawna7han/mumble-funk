@@ -1,0 +1,6 @@
+add_executable(TestBusyToneAsset TestBusyToneAsset.cpp)
+set_target_properties(TestBusyToneAsset PROPERTIES AUTOMOC ON)
+target_link_libraries(TestBusyToneAsset PRIVATE shared Qt5::Test audio-feedback)
+target_compile_definitions(TestBusyToneAsset PRIVATE BUSY_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/audio")
+add_test(NAME TestBusyToneAsset COMMAND $<TARGET_FILE:TestBusyToneAsset>)
+set_tests_properties(TestBusyToneAsset PROPERTIES TIMEOUT 120)

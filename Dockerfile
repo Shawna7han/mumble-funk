@@ -7,7 +7,7 @@ RUN set -eu; export DEBIAN_FRONTEND=noninteractive; \
     apt-get install -y --no-install-recommends \
       build-essential cmake ninja-build pkg-config git ca-certificates python3 \
       qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libboost-dev libssl-dev \
-      libprotobuf-dev protobuf-compiler libprotoc-dev libcap-dev \
+      libopus-dev libprotobuf-dev protobuf-compiler libprotoc-dev libcap-dev \
       libavahi-compat-libdnssd-dev libzeroc-ice-dev; \
     rm -rf /var/lib/apt/lists/*
 ARG FUNK_BUILD_JOBS=2
@@ -39,7 +39,7 @@ RUN set -eu; export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
     apt-get install -y --no-install-recommends python3 ca-certificates \
       libqt5core5t64 libqt5network5t64 libqt5sql5t64 libqt5dbus5t64 libqt5xml5t64 \
-      libqt5sql5-sqlite libssl3t64 libprotobuf32t64 libcap2 \
+      libqt5sql5-sqlite libopus0 libssl3t64 libprotobuf32t64 libcap2 \
       libavahi-compat-libdnssd1 libzeroc-ice3.7t64; \
     groupadd --gid 10001 mumble-funk; \
     useradd --uid 10001 --gid 10001 --no-create-home --home-dir /var/lib/mumble-funk \
@@ -49,10 +49,14 @@ RUN set -eu; export DEBIAN_FRONTEND=noninteractive; \
     rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/mumble-server /usr/local/bin/mumble-server
 COPY scripts/docker/runtime.py /usr/local/bin/funk-container
-COPY LICENSE /usr/share/doc/mumble-funk/LICENSE
+COPY --chmod=0644 scripts/funk/audio.py scripts/funk/audio-preview/audio_control.py /usr/local/lib/mumble-funk/
+COPY --chmod=0644 assets/audio/busy-tone.wav assets/audio/squelch-open.wav assets/audio/squelch-close.wav assets/audio/radio-noise.wav assets/audio/LICENSE.md /usr/local/share/mumble-funk/audio/
+COPY --chmod=0644 LICENSE /usr/share/doc/mumble-funk/LICENSE
 COPY 3rdPartyLicenses /usr/share/doc/mumble-funk/third-party
 COPY --from=build /src/3rdparty/speexdsp/COPYING /usr/share/doc/mumble-funk/SpeexDSP-COPYING
-RUN chmod 0755 /usr/local/bin/funk-container; \
+RUN chmod 0755 /usr/local/bin/funk-container /usr/local/lib/mumble-funk \
+      /usr/local/share/mumble-funk /usr/local/share/mumble-funk/audio; \
+    chmod -R a+rX /usr/share/doc/mumble-funk; \
     ! ldd /usr/local/bin/mumble-server | grep 'not found'
 ENV PYTHONDONTWRITEBYTECODE=1
 USER 10001:10001

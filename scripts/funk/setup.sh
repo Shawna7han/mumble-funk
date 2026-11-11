@@ -11,8 +11,10 @@ report_error() {
 }
 trap report_error ERR
 port_args=()
+source_args=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --experimental-squelch|--experimental-audio-volume|--experimental-busy-tone|--experimental-audio-defaults|--experimental-dev|--experimental-radio-noise) source_args=("$1"); shift ;;
         --port)
             [[ $# -ge 2 ]] || { echo 'Nach --port fehlt die Portnummer.' >&2; exit 1; }
             if [[ ! $2 =~ ^[0-9]{4,5}$ ]] || ((10#$2 < 1024 || 10#$2 > 65535 || 10#$2 == 64738)); then
@@ -20,7 +22,7 @@ while [[ $# -gt 0 ]]; do
             fi
             port_args=(--port "$2"); shift 2 ;;
         --help|-h)
-            echo 'Aufruf als normaler Benutzer: bash scripts/funk/setup.sh [--port 64740]'
+            echo 'Aufruf als normaler Benutzer: bash scripts/funk/setup.sh [--port PORT] [--experimental-squelch|--experimental-audio-volume|--experimental-busy-tone|--experimental-audio-defaults|--experimental-dev|--experimental-radio-noise]'
             echo 'Bestehende Einstellungen werden erhalten. Kein automatisches Git-Update.'
             exit 0 ;;
         *) echo "Unbekannte Option: $1" >&2; exit 1 ;;
@@ -33,7 +35,7 @@ done
 funk_require_supported_os "${ID:-}" "${VERSION_ID:-}"
 # shellcheck source=scripts/funk/source.sh
 source "$repo/scripts/funk/source.sh"
-funk_require_supported_source "$repo"
+funk_require_supported_source "$repo" "${source_args[@]}"
 command -v sudo >/dev/null || { echo 'sudo fehlt. Bitte einen Ubuntu-Benutzer mit sudo-Rechten verwenden.' >&2; exit 1; }
 if ! command -v systemctl >/dev/null || ! systemctl show --property=Version --value >/dev/null; then
     echo 'Ein laufendes systemd wird benötigt. Das Setup ist für Ubuntu-Server/VMs vorgesehen.' >&2; exit 1
@@ -84,14 +86,14 @@ echo "Funkserver-Port: $selected_port TCP/UDP. Bestehende Einstellungen werden e
 step='Build-Abhängigkeiten installieren'
 install_missing git ca-certificates build-essential cmake ninja-build pkg-config \
     qtbase5-dev qtbase5-dev-tools libqt5sql5-sqlite libboost-dev libssl-dev \
-    libprotobuf-dev protobuf-compiler libprotoc-dev libcap-dev \
+    libopus-dev libprotobuf-dev protobuf-compiler libprotoc-dev libcap-dev \
     libavahi-compat-libdnssd-dev libzeroc-ice-dev openssl logrotate
 step='Git-Submodule initialisieren'
 git -C "$repo" submodule update --init --recursive
 step='Server kompilieren und alle Tests ausführen'
-FUNK_BUILD_JOBS="$jobs" bash "$repo/scripts/funk/build.sh"
+FUNK_BUILD_JOBS="$jobs" bash "$repo/scripts/funk/build.sh" "${source_args[@]}"
 step='Eigenen Funkdienst installieren und Start prüfen'
-sudo bash "$repo/scripts/funk/install.sh" --setup --port "$selected_port"
+sudo bash "$repo/scripts/funk/install.sh" --setup --port "$selected_port" "${source_args[@]}"
 printf '\n========================================\n MUMBLE-FUNK INSTALLATION ERFOLGREICH\n========================================\n'
 echo 'Der Dienst ist aktiv, startet automatisch und lauscht auf TCP und UDP.'
 echo 'Simplex wurde anhand der neuen Startmeldungen geprüft; vorhandene Einstellungen bleiben erhalten.'

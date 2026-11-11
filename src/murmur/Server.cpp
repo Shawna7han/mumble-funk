@@ -4,6 +4,7 @@
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
 #include "Server.h"
+#include <opus.h>
 
 #include "ACL.h"
 #include "Channel.h"
@@ -127,6 +128,20 @@ Server::Server(int snum, QObject *p) : QThread(p) {
 												  [this](const SimplexController::Event &event) {
 													  if (m_simplexLogger)
 														  m_simplexLogger->submit(event);
+													  if (m_squelchPlan && event.event == "released" && event.reason != "marker_confirmed") {
+														  if (event.reason == "timeout_suspected" && (m_noiseEnabled || m_squelchTimeoutCloseEnabled)
+															  && (m_noiseEnabled || m_squelchCloseEnabled) && m_audioFeedback) {
+															  // The controller lock serializes this release against the next
+															  // accepted start. Snapshot only existing validated recipients;
+															  // queueing is bounded/try-lock, with no voice lock or IO here.
+															  const auto cues = m_squelchPlan->timeout({event.context.connection,
+																  event.context.session, event.context.channel}, event.frame);
+															  if (m_squelchTimeoutCloseEnabled && m_squelchCloseEnabled)
+                                                          for (const auto &cue : cues) m_audioFeedback->requestSquelch(cue);
+														  } else {
+															  m_squelchPlan->invalidate(event.context.connection);
+														  }
+													  }
 												  });
 		m_simplexTimer = new QTimer(this);
 		m_simplexTimer->setTimerType(Qt::PreciseTimer);
@@ -136,6 +151,69 @@ Server::Server(int snum, QObject *p) : QThread(p) {
 				"Simplex enabled: current channel only; timeout=%1 ms, retry=%2 ms; restart required for changes")
 				.arg(m_simplex->timeoutMs())
 				.arg(m_simplex->retryMs()));
+	}
+	m_busyEnabled = getConf("busytone", Meta::mp.busyTone).toBool()
+		&& getConf("busytonevolume", Meta::mp.busyToneVolume).toInt() > 0;
+	const bool noiseRequested = getConf("radionoise", Meta::mp.radioNoise).toBool();
+	const bool squelchRequested = getConf("squelch", Meta::mp.squelch).toBool();
+	if (m_simplex && getConf("audiofeedback", Meta::mp.audioFeedback).toBool()
+		&& (m_busyEnabled || squelchRequested || noiseRequested)) {
+		try {
+			const QString boostText = getConf("feedbackboostdb", Meta::mp.feedbackBoostDb).toString();
+			if (!QRegExp(QStringLiteral("^(0|[1-9]|1[0-2])$")).exactMatch(boostText))
+				throw std::runtime_error("feedbackboostdb must be an integer from 0 to 12 dB");
+			m_audioFeedback =
+				std::make_unique< AudioFeedback >(getConf("busytonevolume", Meta::mp.busyToneVolume).toInt(),
+												  getConf("busytonefile", Meta::mp.busyToneFile).toString(),
+												  boostText.toInt());
+			if (!m_audioFeedback->warning().isEmpty())
+				log(QStringLiteral("Invalid busy tone WAV; using synthetic default: %1")
+						.arg(m_audioFeedback->warning()));
+			log(QStringLiteral("Busy tone source: %1")
+					.arg(m_audioFeedback->customBusy() ? QStringLiteral("custom PCM WAV")
+													   : QStringLiteral("synthetic double tone")));
+			if (squelchRequested) {
+				m_squelchOpenEnabled = getConf("squelchopen", Meta::mp.squelchOpen).toBool();
+				m_squelchCloseEnabled = getConf("squelchclose", Meta::mp.squelchClose).toBool();
+				m_squelchTimeoutCloseEnabled = getConf("squelchclosetimeoutfallback", Meta::mp.squelchCloseTimeoutFallback).toBool();
+				try {
+					m_audioFeedback->configureSquelch(getConf("squelchopenfile", Meta::mp.squelchOpenFile).toString(),
+						getConf("squelchclosefile", Meta::mp.squelchCloseFile).toString(),
+						getConf("squelchopenvolume", Meta::mp.squelchOpenVolume).toInt(),
+						getConf("squelchclosevolume", Meta::mp.squelchCloseVolume).toInt(),
+						m_squelchOpenEnabled, m_squelchCloseEnabled);
+					m_squelchPlan = std::make_unique<SquelchPlan>(true);
+					log(QStringLiteral("Experimental Squelch enabled: private receiver-session signals; speech unchanged"));
+				} catch (const std::exception &error) {
+					log(QStringLiteral("Squelch disabled: %1").arg(QString::fromUtf8(error.what())));
+				}
+			}
+            if (noiseRequested) {
+                try {
+                    const QString volume = getConf("radionoisevolume", Meta::mp.radioNoiseVolume).toString();
+                    if (!QRegExp(QStringLiteral("^(0|[1-9][0-9]?|100)$")).exactMatch(volume))
+                        throw std::runtime_error("radionoisevolume must be 0..100");
+                    m_noiseEnabled = m_audioFeedback->configureNoise(
+                        getConf("radionoisefile", Meta::mp.radioNoiseFile).toString(), volume.toInt());
+                    if (m_noiseEnabled) {
+                        if (!m_squelchPlan) {
+                            m_squelchPlan = std::make_unique<SquelchPlan>(true);
+                            m_squelchOpenEnabled = m_squelchCloseEnabled = m_squelchTimeoutCloseEnabled = false;
+                        }
+                        log(QStringLiteral("Experimental radio noise enabled: private feedback, independent gain, max 16 producers"));
+                    } else log(QStringLiteral("Radio noise disabled: empty file or zero volume"));
+                } catch (const std::exception &error) {
+                    log(QStringLiteral("Radio noise disabled: %1").arg(QString::fromUtf8(error.what())));
+                }
+            }
+			m_audioFeedbackTimer = new QTimer(this);
+			m_audioFeedbackTimer->setTimerType(Qt::PreciseTimer);
+			connect(m_audioFeedbackTimer, &QTimer::timeout, this, &Server::deliverAudioFeedback);
+			m_audioFeedbackTimer->start(20);
+			log(QStringLiteral("Experimental audio feedback enabled: private Opus signals via TCP tunnel"));
+		} catch (const std::exception &error) {
+			log(QStringLiteral("Audio feedback disabled: %1").arg(QString::fromUtf8(error.what())));
+		}
 	}
 	if (getConf("voicediagnostics", Meta::mp.voiceDiagnostics).toBool()) {
 		VoiceDiagnostics::Config config;
@@ -363,6 +441,9 @@ Server::~Server() {
 #endif
 
 	stopThread();
+	if (m_audioFeedbackTimer)
+		m_audioFeedbackTimer->stop();
+	m_audioFeedback.reset();
 	if (m_simplexTimer)
 		m_simplexTimer->stop();
 	if (m_simplex)
@@ -1260,6 +1341,8 @@ void Server::recordVoicePacket(const ServerUser &user, const Mumble::Protocol::A
 
 void Server::updateSimplexPermission(const ServerUser &user) {
 	// Caller holds qrwlVoiceThread for write; no packet can pass the changed permission.
+	if (m_squelchPlan && (user.bMute || user.bSuppress || user.bSelfMute || user.bDeaf || user.bSelfDeaf))
+		m_squelchPlan->invalidate(user.diagnosticConnection);
 	if (m_simplex && (user.bMute || user.bSuppress || user.bSelfMute)) {
 		m_simplex->invalidate(user.diagnosticConnection, QStringLiteral("permission_lost"));
 	}
@@ -1295,8 +1378,15 @@ void Server::processMsg(ServerUser *u, Mumble::Protocol::AudioData audioData, Au
 				u->bwr.addFrame(static_cast< int >(20 + 8 + 4 + audioData.payload.size()), iMaxBandwidth / 8);
 		}
 		transmission = m_simplex->begin(packet);
-		if (!transmission.allowed)
+		if (!transmission.allowed) {
+			const bool feedback = transmission.feedback;
+			transmission.lock.unlock(); // Queue Busy only after releasing the Simplex mutex.
+			if (feedback && m_audioFeedback && m_busyEnabled)
+				m_audioFeedback->request(AudioFeedback::Signal::Busy,
+										 { packet.context.connection, packet.context.session, packet.context.channel },
+										 SimplexController::monotonicUs());
 			return;
+		}
 	} else {
 		if (u->bMute || u->bSuppress || u->bSelfMute)
 			return;
@@ -1500,6 +1590,33 @@ void Server::processMsg(ServerUser *u, Mumble::Protocol::AudioData audioData, Au
 
 			// Find next range
 			currentRange = AudioReceiverBuffer::getReceiverRange(currentRange.end, receiverList.end());
+		}
+	}
+	if (m_squelchPlan) {
+		std::vector<SquelchPlan::Identity> recipients;
+		for (bool positional : {false, true}) {
+			for (const auto &entry : buffer.getReceivers(positional)) {
+				if (recipients.size() == SquelchPlan::MaxRecipients) break;
+				const auto &receiver = entry.getReceiver();
+				if (receiver.bOpus) recipients.push_back({receiver.diagnosticConnection, receiver.uiSession,
+					static_cast<unsigned int>(receiver.cChannel->iId)});
+			}
+		}
+		const bool payload = !audioData.payload.empty();
+		const bool valid = payload && audioData.usedCodec == Mumble::Protocol::AudioCodec::Opus && opus_packet_get_nb_samples(audioData.payload.data(),
+			static_cast<int>(audioData.payload.size()), 48000) > 0;
+		const auto cues = m_squelchPlan->observe({u->diagnosticConnection, u->uiSession,
+			static_cast<unsigned int>(u->cChannel->iId)}, true, audioData.frameNumber, payload,
+			audioData.isLastFrame, valid, recipients);
+		for (const auto &cue : cues) {
+			if (m_noiseEnabled && cue.kind == SquelchPlan::Kind::Open) m_audioFeedback->requestNoise(cue);
+			if (cue.kind == SquelchPlan::Kind::Open && !m_squelchOpenEnabled) {
+				// Acknowledge the accepted start/recipient in Close-only mode,
+				// without sending Open. Denied starts never reach this path.
+				m_squelchPlan->consume(cue, cue.sender, cue.recipient, true);
+			} else if (cue.kind != SquelchPlan::Kind::Close || m_squelchCloseEnabled) {
+				m_audioFeedback->requestSquelch(cue);
+			}
 		}
 	}
 }
@@ -1821,6 +1938,9 @@ void Server::connectionClosed(QAbstractSocket::SocketError err, const QString &r
 	{
 		QWriteLocker wl(&qrwlVoiceThread);
 
+		if (m_audioFeedback)
+			m_audioFeedback->cancel(u->diagnosticConnection);
+		if (m_squelchPlan) m_squelchPlan->invalidate(u->diagnosticConnection);
 		qhUsers.remove(u->uiSession);
 		if (m_simplex)
 			m_simplex->disconnect(u->diagnosticConnection);
@@ -1962,6 +2082,67 @@ void Server::checkTimeout() {
 	qrwlVoiceThread.unlock();
 	foreach (ServerUser *u, qlClose)
 		u->rejectConnection(true);
+}
+
+void Server::deliverAudioFeedback() {
+	// Optional playback yields to current voice processing. The write lock makes
+	// cue validation + delivery atomic against UDP lifecycle/recipient updates.
+	if (m_squelchPlan && !qrwlVoiceThread.tryLockForWrite()) {
+		// Yield to speech without losing a whole 20-ms output opportunity.
+		// Restart this same timer; retries cannot accumulate queued callbacks.
+		if (m_audioFeedback->nextTickDelayMs(SimplexController::monotonicUs()))
+			m_audioFeedbackTimer->start(AudioFeedback::RetryIntervalMs);
+		return;
+	}
+	struct Unlock { QReadWriteLock *lock; ~Unlock() { if (lock) lock->unlock(); } } unlock{m_squelchPlan ? &qrwlVoiceThread : nullptr};
+	// Main-thread only. No raw user pointer survives this callback. TCP tunneling
+	// uses the normal client decoder even for clients sending encrypted UDP audio.
+	m_audioFeedback->tick(SimplexController::monotonicUs(), [this](const AudioFeedback::Recipient &recipient,
+																   const QByteArray &payload, std::uint64_t frame,
+																   bool last) {
+		ServerUser *user = qhUsers.value(recipient.session);
+		if (!user || user->diagnosticConnection != recipient.connection || !user->cChannel
+			|| static_cast< unsigned int >(user->cChannel->iId) != recipient.channel
+			|| user->sState != ServerUser::Authenticated || user->bDeaf || user->bSelfDeaf || !user->bOpus
+			|| !user->feedbackWritable())
+			return false;
+		Mumble::Protocol::AudioData audio;
+		audio.senderSession =
+			recipient.session; // Own-session audio is supported by server loopback in existing clients.
+		audio.frameNumber     = frame;
+		audio.isLastFrame     = last;
+		audio.targetOrContext = Mumble::Protocol::AudioContext::NORMAL;
+		audio.payload         = gsl::span< const Mumble::Protocol::byte >(
+            reinterpret_cast< const Mumble::Protocol::byte * >(payload.constData()),
+            static_cast< std::size_t >(payload.size()));
+		Mumble::Protocol::UDPAudioEncoder< Mumble::Protocol::Role::Server > encoder(user->m_version);
+		const auto bytes = encoder.encodeAudioPacket(audio);
+		tcpTransmitData(QByteArray(reinterpret_cast< const char * >(bytes.data()), static_cast< int >(bytes.size())),
+						recipient.session);
+		return true;
+	}, [this](const SquelchPlan::Cue &cue, bool starting) {
+		if (!m_squelchPlan) return false;
+		auto matches = [this](const SquelchPlan::Identity &id) {
+			const auto *user = qhUsers.value(id.session);
+			return user && user->diagnosticConnection == id.connection && user->sState == ServerUser::Authenticated
+				&& user->cChannel && static_cast<unsigned int>(user->cChannel->iId) == id.channel;
+		};
+		if (!matches(cue.sender) || !matches(cue.recipient)) return false;
+		const auto *source = qhUsers.value(cue.sender.session);
+		const auto *receiver = qhUsers.value(cue.recipient.session);
+        // Continuous optional traffic must not build a long TCP backlog. Keep
+        // the previous Busy/Squelch budget when radio noise is disabled.
+		if (source->bMute || source->bSuppress || source->bSelfMute || receiver->bDeaf || receiver->bSelfDeaf
+			|| !receiver->bOpus || !receiver->feedbackWritable()) return false;
+		return starting ? m_squelchPlan->consume(cue, cue.sender, cue.recipient, true) : m_squelchPlan->current(cue);
+	}, [this](const AudioFeedback::Recipient &recipient, bool continuous) {
+		const auto *receiver = qhUsers.value(recipient.session);
+		return receiver && receiver->diagnosticConnection == recipient.connection && receiver->cChannel
+			&& static_cast<unsigned int>(receiver->cChannel->iId) == recipient.channel
+			&& receiver->feedbackWritable(continuous ? 1024 : 65536);
+	});
+	const int delay = m_audioFeedback->nextTickDelayMs(SimplexController::monotonicUs());
+	if (delay) m_audioFeedbackTimer->start(delay);
 }
 
 void Server::tcpTransmitData(QByteArray a, unsigned int id) {
@@ -2144,6 +2325,9 @@ void Server::userEnterChannel(User *p, Channel *c, MumbleProto::UserState &mpus)
 
 	{
 		QWriteLocker wl(&qrwlVoiceThread);
+		if (m_audioFeedback)
+			m_audioFeedback->cancel(static_cast< ServerUser * >(p)->diagnosticConnection);
+		if (m_squelchPlan) m_squelchPlan->invalidate(static_cast<ServerUser *>(p)->diagnosticConnection);
 		if (m_simplex) {
 			m_simplex->invalidate(static_cast< ServerUser * >(p)->diagnosticConnection,
 								  QStringLiteral("channel_changed"));

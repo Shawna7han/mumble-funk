@@ -1,0 +1,7 @@
+add_executable(TestSquelchPassthrough TestSquelchPassthrough.cpp)
+set_target_properties(TestSquelchPassthrough PROPERTIES AUTOMOC ON)
+target_link_libraries(TestSquelchPassthrough PRIVATE shared Qt5::Test audio-feedback)
+target_compile_definitions(TestSquelchPassthrough PRIVATE MUMBLE_SERVER_PATH="$<TARGET_FILE:mumble-server>")
+add_dependencies(TestSquelchPassthrough mumble-server)
+add_test(NAME TestSquelchPassthrough COMMAND $<TARGET_FILE:TestSquelchPassthrough>)
+set_tests_properties(TestSquelchPassthrough PROPERTIES TIMEOUT 120)

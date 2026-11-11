@@ -63,8 +63,17 @@ void SimplexController::block(User &user, const QString &reason, std::int64_t no
 void SimplexController::finishBlocked(User &user, const QString &reason, std::int64_t now) {
 	if (user.phase == Phase::Blocked && user.denied)
 		event(user, "denied_end", reason, now, user.denied);
-	user.phase  = Phase::Idle;
-	user.denied = 0;
+	user.phase            = Phase::Idle;
+	user.denied           = 0;
+	user.feedbackReported = false;
+}
+
+void SimplexController::rejectFeedback(User &user, const Packet &packet, Transmission &result) {
+	// Markers alone and forbidden/muted paths do not start an audible attempt.
+	if (packet.payload && packet.eligible && packet.target == 0 && !user.feedbackReported) {
+		user.feedbackReported = true;
+		result.feedback       = true;
+	}
 }
 
 void SimplexController::expireChannel(unsigned int channel, std::int64_t now) {
@@ -104,6 +113,7 @@ SimplexController::Transmission SimplexController::begin(const Packet &packet) {
 			block(user, QStringLiteral("sequence_not_advanced"), now);
 		else if (user.phase == Phase::Blocked)
 			++user.denied;
+		rejectFeedback(user, packet, result);
 		return result; // Never renew a lease or act on a stale terminator.
 	}
 	user.seen         = true;
@@ -115,6 +125,7 @@ SimplexController::Transmission SimplexController::begin(const Packet &packet) {
 	}
 	if (user.phase == Phase::Blocked) {
 		block(user, QStringLiteral("retry_required"), now);
+		rejectFeedback(user, packet, result);
 		if (packet.last)
 			finishBlocked(user, QStringLiteral("marker_confirmed"), now);
 		return result;
@@ -124,6 +135,7 @@ SimplexController::Transmission SimplexController::begin(const Packet &packet) {
 			return result; // An end-only packet never claims a channel.
 		if (m_owners.count(user.context.channel)) {
 			block(user, QStringLiteral("busy"), now);
+			rejectFeedback(user, packet, result);
 			if (packet.last)
 				finishBlocked(user, QStringLiteral("marker_confirmed"), now);
 			return result;
@@ -138,7 +150,8 @@ SimplexController::Transmission SimplexController::begin(const Packet &packet) {
 	result.allowed = true;
 	if (packet.last) {
 		release(user, QStringLiteral("marker_confirmed"), now);
-		user.phase = Phase::Idle;
+		user.phase            = Phase::Idle;
+		user.feedbackReported = false;
 	}
 	return result;
 }

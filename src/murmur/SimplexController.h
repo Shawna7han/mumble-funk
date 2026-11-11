@@ -42,6 +42,8 @@ public:
 	struct Transmission {
 		std::unique_lock< std::mutex > lock;
 		bool allowed = false;
+		// Direct forwarding decision, independent of diagnostic event filtering.
+		bool feedback = false;
 	};
 	SimplexController(int timeoutMs, int retryMs, Sink sink = {}, Clock clock = {});
 	Transmission begin(const Packet &packet);
@@ -64,6 +66,7 @@ private:
 		std::uint64_t accepted     = 0;
 		std::uint64_t denied       = 0;
 		bool seen                  = false;
+		bool feedbackReported      = false;
 		bool udp                   = false;
 	};
 	std::mutex m_mutex;
@@ -77,6 +80,7 @@ private:
 	void release(User &user, const QString &reason, std::int64_t now);
 	void block(User &user, const QString &reason, std::int64_t now);
 	void finishBlocked(User &user, const QString &reason, std::int64_t now);
+	void rejectFeedback(User &user, const Packet &packet, Transmission &result);
 	void expireChannel(unsigned int channel, std::int64_t now);
 };
 #endif

@@ -243,6 +243,12 @@ if (packaging AND WIN32)
 	message(STATUS "Using VC redist >= ${VC_REDIST_VERSION} as dependency")
 endif()
 
+# Make the dependency-free Phase-1 DSP available to future server adapters.
+# The offline preview remains opt-in and nothing links it into the server.
+if(server OR tests)
+	add_subdirectory(tools/analog-voice)
+endif()
+
 if(client OR server)
 	add_subdirectory(src)
 endif()

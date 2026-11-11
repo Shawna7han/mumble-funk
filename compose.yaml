@@ -18,8 +18,8 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m,mode=1777
     ports:
-      - "${FUNK_HOST_PORT:-64739}:64739/tcp"
-      - "${FUNK_HOST_PORT:-64739}:64739/udp"
+      - "${FUNK_HOST_PORT:-64740}:64739/tcp"
+      - "${FUNK_HOST_PORT:-64740}:64739/udp"
     volumes:
       - funk_config:/etc/mumble-funk
       - funk_state:/var/lib/mumble-funk
